@@ -27,3 +27,23 @@
 2025-04-14 10:46:48,799 - INFO - Peer mới đăng ký: -PY0001- từ 192.168.189.1:6881
 2025-04-14 10:57:36,684 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
 2025-04-14 10:57:45,343 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 10:57:54,944 - INFO - Peer -PY0001- đã tải xong 0f2ab47f và đăng ký sở hữu
+2025-04-14 10:57:54,960 - INFO - Đã nhận và lưu metainfo cho torrent: tracker.log (0f2ab47f97c5ba14e9d7f73d4a24f06799738079)
+2025-04-14 10:57:54,960 - INFO - Peer -PY0001- đăng ký sở hữu torrent: tracker.log
+2025-04-14 10:58:00,718 - INFO - Peer mới đăng ký: -PY0001- từ 192.168.189.1:6881
+2025-04-14 10:58:03,050 - INFO - Peer -PY0001- bắt đầu tải 0f2ab47f
+2025-04-14 10:58:24,710 - INFO - Peer -PY0001- không còn sở hữu torrent 0f2ab47f
+2025-04-14 10:58:24,711 - INFO - Peer -PY0001- đã dừng tải 0f2ab47f
+2025-04-14 11:00:40,844 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 11:01:24,497 - INFO - Peer -PY0001- đã dừng tải 0f2ab47f
+2025-04-14 11:01:30,430 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 11:01:44,456 - INFO - Peer -PY0001- đã tải xong eff43679 và đăng ký sở hữu
+2025-04-14 11:01:44,511 - INFO - Đã nhận và lưu metainfo cho torrent: scene.pkg (eff436795433ef56d2598f3a77bb4e256f014703)
+2025-04-14 11:01:44,511 - INFO - Peer -PY0001- đăng ký sở hữu torrent: scene.pkg
+2025-04-14 11:01:50,760 - INFO - Peer mới đăng ký: -PY0001- từ 192.168.189.1:6881
+2025-04-14 11:01:55,255 - INFO - Peer -PY0001- bắt đầu tải eff43679
+2025-04-14 11:02:19,979 - INFO - Peer -PY0001- không còn sở hữu torrent eff43679
+2025-04-14 11:02:19,979 - INFO - Peer -PY0001- đã dừng tải eff43679
+2025-04-14 11:02:31,401 - INFO - Peer -PY0001- không còn sở hữu torrent eff43679
+2025-04-14 11:02:31,402 - INFO - Đã xóa torrent scene.pkg (eff43679) vì không còn peer sở hữu
+2025-04-14 11:02:31,402 - INFO - Peer -PY0001- đã dừng tải eff43679

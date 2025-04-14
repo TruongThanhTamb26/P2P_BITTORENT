@@ -8,7 +8,7 @@ import os
 # Địa chỉ IP máy đang chạy tracker server
 # Trong môi trường thực tế, đây là địa chỉ IP public hoặc domain name
 # Khi chạy trên cùng một máy, có thể để là localhost
-TRACKER_HOST = "10.28.128.187"  # Thay đổi từ 192.168.110.35 sang localhost vì kết nối thực tế đang sử dụng localhost
+TRACKER_HOST = "10.28.128.90"  # Thay đổi từ 192.168.110.35 sang localhost vì kết nối thực tế đang sử dụng localhost
 
 # Cổng của tracker server
 TRACKER_PORT = 8000

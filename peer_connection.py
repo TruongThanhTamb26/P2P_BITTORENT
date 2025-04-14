@@ -6,6 +6,21 @@ import time
 import threading
 import queue
 
+# Định nghĩa các loại message trong protocol BitTorrent
+class MessageType:
+    """Các loại message trong protocol BitTorrent"""
+    KEEP_ALIVE = -1  # Không phải message type thực, chỉ để mã hóa keep-alive message
+    CHOKE = 0
+    UNCHOKE = 1
+    INTERESTED = 2
+    NOT_INTERESTED = 3
+    HAVE = 4
+    BITFIELD = 5
+    REQUEST = 6
+    PIECE = 7
+    CANCEL = 8
+    PORT = 9  # Cho DHT
+
 class PeerConnection:
     """Xử lý kết nối đến một peer cụ thể"""
     
@@ -143,23 +158,267 @@ class PeerConnection:
         
         return True
     
+    def _process_bitfield(self, payload):
+        """Xử lý bitfield từ peer."""
+        bitfield_length = len(payload) * 8
+        for i in range(min(bitfield_length, len(self.peer_bitfield))):
+            byte_index = i // 8
+            bit_index = 7 - (i % 8)  # Bit thứ tự từ trái sang phải
+            if byte_index < len(payload):
+                has_piece = bool(payload[byte_index] & (1 << bit_index))
+                self.peer_bitfield[i] = has_piece
+
+    def _peer_has_pieces_we_need(self):
+        """Kiểm tra xem peer có pieces mà chúng ta cần không."""
+        for i in range(len(self.peer_bitfield)):
+            if self.peer_bitfield[i] and not self.piece_manager.has_piece(i):
+                return True
+        return False
+
+    def _handle_piece(self, payload):
+        """Xử lý piece data từ peer."""
+        # Cấu trúc: <index><begin><block>
+        if len(payload) < 8:
+            logging.error(f"Piece payload quá ngắn: {len(payload)} bytes")
+            return
+            
+        index = struct.unpack(">I", payload[0:4])[0]
+        begin = struct.unpack(">I", payload[4:8])[0]
+        block = payload[8:]
+        
+        logging.debug(f"Nhận piece {index}, offset {begin}, length {len(block)}")
+        
+        # Cập nhật piece manager
+        if self.piece_manager.receive_block(index, begin, block):
+            logging.info(f"Đã nhận và lưu block: piece {index}, offset {begin}")
+        else:
+            logging.error(f"Lỗi khi lưu block: piece {index}, offset {begin}")
+    
     def download(self):
-        """Tải xuống từ peer này"""
-        if not self.connected:
+        """Tải xuống dữ liệu từ peer."""
+        try:
+            # Gửi thông báo interested
+            self._send_message(MessageType.INTERESTED)
+            
+            # Biến theo dõi trạng thái
+            am_choking = True
+            am_interested = True
+            peer_choking = True
+            peer_interested = False
+            
+            # Thời gian giữa các request piece
+            request_interval = 0.1  # Thời gian giữa các request
+            last_request_time = 0
+            pending_requests = 0
+            MAX_PENDING_REQUESTS = 5  # Số lượng request đồng thời tối đa
+            
+            # Timeout cho kết nối không hoạt động
+            last_receive_time = time.time()
+            INACTIVE_TIMEOUT = 60  # 60 giây
+            
+            logging.info(f"Bắt đầu download từ {self.peer_id[:8]}")
+            
+            while True:
+                # Kiểm tra timeout
+                if time.time() - last_receive_time > INACTIVE_TIMEOUT:
+                    logging.warning(f"Kết nối với {self.peer_id[:8]} timeout, ngắt kết nối")
+                    break
+                    
+                # Đọc message type và length
+                try:
+                    self.socket.settimeout(5.0)  # Timeout ngắn để không bị treo
+                    message_length_bytes = self._receive_exact(4)
+                    if not message_length_bytes:
+                        logging.warning(f"Kết nối với {self.peer_id[:8]} đã đóng")
+                        break
+                        
+                    message_length = struct.unpack(">I", message_length_bytes)[0]
+                    
+                    # Keep-alive message
+                    if message_length == 0:
+                        logging.debug(f"Nhận keep-alive từ {self.peer_id[:8]}")
+                        last_receive_time = time.time()
+                        continue
+                        
+                    # Đọc message ID và payload
+                    message_id_bytes = self._receive_exact(1)
+                    if not message_id_bytes:
+                        break
+                    message_id = message_id_bytes[0]
+                    
+                    # Đọc payload nếu cần
+                    payload = b""
+                    remaining_length = message_length - 1
+                    if remaining_length > 0:
+                        payload = self._receive_exact(remaining_length)
+                        if not payload:
+                            break
+                    
+                    last_receive_time = time.time()
+                    
+                    # Xử lý message theo loại
+                    if message_id == MessageType.CHOKE:
+                        peer_choking = True
+                        logging.debug(f"Peer {self.peer_id[:8]} choked us")
+                    
+                    elif message_id == MessageType.UNCHOKE:
+                        peer_choking = False
+                        logging.info(f"Peer {self.peer_id[:8]} unchoked us - có thể yêu cầu pieces")
+                    
+                    elif message_id == MessageType.INTERESTED:
+                        peer_interested = True
+                    
+                    elif message_id == MessageType.NOT_INTERESTED:
+                        peer_interested = False
+                    
+                    elif message_id == MessageType.HAVE:
+                        piece_index = struct.unpack(">I", payload)[0]
+                        self.peer_bitfield[piece_index] = True
+                        logging.debug(f"Peer {self.peer_id[:8]} có piece {piece_index}")
+                    
+                    elif message_id == MessageType.BITFIELD:
+                        self._process_bitfield(payload)
+                        logging.debug(f"Nhận bitfield từ peer {self.peer_id[:8]}")
+                        # Ngay sau khi nhận bitfield, gửi interested nếu peer có pieces chúng ta cần
+                        if self._peer_has_pieces_we_need():
+                            self._send_message(MessageType.INTERESTED)
+                            am_interested = True
+                            logging.info(f"Gửi INTERESTED tới peer {self.peer_id[:8]}")
+                    
+                    elif message_id == MessageType.REQUEST:
+                        # Xử lý request từ peer nếu chúng ta không choked họ
+                        if not am_choking:
+                            self._handle_request(payload)
+                    
+                    elif message_id == MessageType.PIECE:
+                        # Xử lý piece data
+                        self._handle_piece(payload)
+                        pending_requests -= 1
+                    
+                    elif message_id == MessageType.CANCEL:
+                        # Xử lý hủy request
+                        pass
+                    
+                except socket.timeout:
+                    # Timeout khi chờ đọc, không làm gì
+                    pass
+                
+                # Nếu không bị choke và có pieces để tải
+                if not peer_choking and self._peer_has_pieces_we_need():
+                    now = time.time()
+                    # Chỉ gửi request nếu đã đủ thời gian từ lần request trước
+                    # và chưa đạt số lượng request tối đa
+                    if now - last_request_time > request_interval and pending_requests < MAX_PENDING_REQUESTS:
+                        piece_index = self._select_piece_to_request()
+                        if piece_index is not None:
+                            self._request_piece(piece_index)
+                            pending_requests += 1
+                            last_request_time = now
+                            logging.debug(f"Yêu cầu piece {piece_index} từ peer {self.peer_id[:8]}")
+                
+                # Kiểm tra nếu đã hoàn thành tất cả pieces
+                if self.piece_manager.is_complete():
+                    logging.info(f"Đã tải xong tất cả pieces từ {self.peer_id[:8]}")
+                    break
+                
+                # Gửi keep-alive nếu cần
+                if time.time() - last_receive_time > 30:  # 30 giây không có hoạt động
+                    self._send_message(MessageType.KEEP_ALIVE)
+        
+        except Exception as e:
+            logging.error(f"Lỗi trong quá trình download từ {self.peer_id[:8]}: {e}")
+        
+        finally:
+            try:
+                self.socket.close()
+            except:
+                pass
+            logging.info(f"Đã đóng kết nối với peer {self.peer_id[:8]}")
+
+    def connect(self, our_peer_id):
+        """Kết nối đến peer kèm handshake"""
+        try:
+            # Tạo socket và kết nối
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(10)  # Timeout 10 giây
+            self.socket.connect((self.ip, self.port))
+            
+            # Gửi handshake
+            info_hash_bytes = bytes.fromhex(self.info_hash)
+            our_peer_id_bytes = our_peer_id.encode('utf-8')
+            
+            # Cấu trúc của handshake
+            protocol = b"BitTorrent protocol"
+            pstrlen = bytes([len(protocol)])
+            reserved = b"\x00" * 8
+            
+            handshake = pstrlen + protocol + reserved + info_hash_bytes + our_peer_id_bytes
+            self.socket.sendall(handshake)
+            
+            # Nhận handshake từ peer
+            pstrlen_received = self.socket.recv(1)
+            if not pstrlen_received:
+                logging.error(f"Lỗi handshake: không nhận được pstrlen")
+                self.socket.close()
+                return False
+                
+            pstrlen = pstrlen_received[0]
+            if pstrlen <= 0:
+                logging.error(f"Lỗi handshake: pstrlen không hợp lệ")
+                self.socket.close()
+                return False
+                
+            handshake_response = self.socket.recv(pstrlen + 48)  # pstr + 8 reserved bytes + 20 bytes info_hash + 20 bytes peer_id
+            if len(handshake_response) < pstrlen + 48:
+                logging.error(f"Lỗi handshake: phản hồi không đủ dài ({len(handshake_response)} < {pstrlen + 48})")
+                self.socket.close()
+                return False
+            
+            # Kiểm tra info_hash trong handshake response
+            info_hash_start = pstrlen + 8
+            info_hash_end = info_hash_start + 20
+            received_info_hash = handshake_response[info_hash_start:info_hash_end]
+            
+            if received_info_hash != info_hash_bytes:
+                logging.error(f"Lỗi handshake: info_hash không trùng khớp")
+                self.socket.close()
+                return False
+                
+            # Lấy peer_id từ handshake
+            peer_id_bytes = handshake_response[info_hash_end:info_hash_end + 20]
+            try:
+                self.peer_id = peer_id_bytes.decode('utf-8', errors='replace')
+            except:
+                self.peer_id = peer_id_bytes.hex()
+                
+            logging.info(f"Handshake thành công với peer {self.peer_id}")
+            
+            # Cài đặt thông tin peer (bitfield)
+            num_pieces = self.piece_manager.piece_count
+            self.peer_bitfield = [False] * num_pieces
+            
+            # Gửi bitfield của chính mình (pieces mà chúng ta có)
+            self._send_bitfield()
+            
+            # Chuyển sang nonblocking mode để xử lý I/O tốt hơn
+            self.socket.setblocking(False)
+            
+            # Test kết nối bằng cách gửi keep-alive
+            try:
+                self._send_message(MessageType.KEEP_ALIVE)
+            except:
+                logging.error("Không thể gửi keep-alive, kết nối có thể đã đóng")
+                self.socket.close()
+                return False
+            
+            return True
+        except Exception as e:
+            logging.error(f"Lỗi khi kết nối đến peer {self.ip}:{self.port}: {e}")
+            try:
+                self.socket.close()
+            except:
+                pass
             return False
-        
-        # Khởi động thread nhận message
-        receiver_thread = threading.Thread(target=self._receiver_loop, daemon=True)
-        receiver_thread.start()
-        
-        # Khởi động thread gửi request
-        request_thread = threading.Thread(target=self._request_loop, daemon=True)
-        request_thread.start()
-        
-        # Gửi message interested
-        self._send_interested()
-        
-        return True
     
     def _receiver_loop(self):
         """Nhận và xử lý message từ peer"""

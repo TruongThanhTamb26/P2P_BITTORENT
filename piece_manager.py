@@ -129,6 +129,50 @@ class PieceManager:
             piece_index = candidates[0]
             self.requested_pieces.add(piece_index)
             return piece_index
+        
+    def receive_block(self, piece_index, begin, data):
+        """Nhận và lưu một block của piece."""
+        with self.lock:
+            # Kiểm tra tính hợp lệ
+            if piece_index >= len(self.pieces):
+                logging.error(f"Piece index không hợp lệ: {piece_index}")
+                return False
+                
+            piece = self.pieces[piece_index]
+            
+            # Kiểm tra offset
+            if begin > len(piece.data):
+                logging.error(f"Block offset không hợp lệ: {begin}")
+                return False
+                
+            # Lưu data vào đúng vị trí
+            end = begin + len(data)
+            if end > len(piece.data):
+                logging.error(f"Block vượt quá kích thước piece: {end} > {len(piece.data)}")
+                return False
+                
+            # Sao chép dữ liệu
+            piece.data[begin:end] = data
+            piece.downloaded_bytes += len(data)
+            self.bytes_downloaded += len(data)
+            
+            # Kiểm tra nếu piece đã hoàn thành
+            if piece.downloaded_bytes == piece.length:
+                # Xác minh hash
+                if self._verify_piece(piece_index):
+                    piece.complete = True
+                    self.completed_pieces += 1
+                    self._write_piece_to_file(piece_index)
+                    logging.info(f"Piece {piece_index} đã hoàn thành và xác thực")
+                    return True
+                else:
+                    # Hash không khớp, reset piece
+                    logging.error(f"Piece {piece_index} hash không khớp, tải lại")
+                    piece.data = bytearray(piece.length)
+                    piece.downloaded_bytes = 0
+                    return False
+            
+            return True
     
     def receive_piece(self, piece_index, data):
         """Nhận và lưu piece đã tải xuống"""
