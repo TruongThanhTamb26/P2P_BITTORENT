@@ -290,17 +290,30 @@ def start_cleanup_thread():
     logging.info("Thread dọn dẹp peer đã khởi động")
 
 def run_server(port=8000):
+
     """Khởi động HTTP server"""
     server_address = ('0.0.0.0', port)
     httpd = HTTPServer(server_address, TrackerHandler) 
-    logging.info(f"Tracker đang chạy trên cổng {port}...")
 
     # Thông tin mạng
     import socket
     hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
+    all_ips = []
+    try:
+        import subprocess
+        output = subprocess.check_output("ipconfig", shell=True).decode('utf-8', errors='ignore')
+        import re
+        ip_pattern = re.compile(r'IPv4 Address.*: ([\d.]+)')
+        all_ips = ip_pattern.findall(output)
+    except:
+        # Phương pháp backup
+        try:
+            local_ip = socket.gethostbyname(hostname)
+            all_ips = [local_ip]
+        except:
+            pass
+    
     logging.info(f"Hostname: {hostname}")
-    logging.info(f"Server IP: {local_ip}")
     logging.info(f"Tracker đang chạy trên cổng {port}...")
     
     

@@ -29,14 +29,13 @@ logging.basicConfig(
 
 class Peer:
     """Quản lý việc chia sẻ và tải file trong mạng P2P"""
-    
+        
     def __init__(self, tracker_url=TRACKER_URL):
         """Khởi tạo peer"""
         # Tạo ID cho peer
         self.peer_id = self._generate_peer_id()
         self.tracker_url = tracker_url
         self.port = DEFAULT_PEER_PORT
-        self.ip = socket.gethostbyname(socket.gethostname())
         self.tracker_url = tracker_url
         
         # Thiết lập thư mục
@@ -60,7 +59,7 @@ class Peer:
         # Đăng ký với tracker khi khởi động
         if not self.register_with_tracker():
             logging.warning("Không thể đăng ký với tracker. Một số chức năng có thể bị hạn chế.")
-    
+
     def _generate_peer_id(self):
         """Tạo ID ngẫu nhiên cho peer"""
         import random
