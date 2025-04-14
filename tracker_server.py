@@ -7,7 +7,7 @@ import threading # Thư viện threading để xử lý đa luồng
 from http.server import HTTPServer, BaseHTTPRequestHandler # Thư viện http.server để tạo máy chủ HTTP
 from pathlib import Path # Thư viện pathlib để thao tác với đường dẫn tệp
 import urllib.parse # Thư viện urllib.parse để phân tích URL
-from config import METAINFO_DIR # Nhập METAINFO_DIR từ file config.py
+from config import METAINFO_DIR, TRACKER_PORT # Nhập METAINFO_DIR từ file config.py
 
 # Đảm bảo METAINFO_DIR là một đối tượng Path
 METAINFO_DIR = Path(METAINFO_DIR) 
@@ -294,6 +294,9 @@ def run_server(port=8000):
     server_address = ('', port)
     httpd = HTTPServer(server_address, TrackerHandler)
     logging.info(f"Tracker đang chạy trên cổng {port}...")
+
+    server = HTTPServer(('0.0.0.0', TRACKER_PORT), TrackerHandler)
+    server.serve_forever()
     
     # Bắt đầu thread dọn dẹp
     start_cleanup_thread()

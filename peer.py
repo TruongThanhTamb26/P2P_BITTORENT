@@ -13,7 +13,7 @@ import hashlib
 import requests
 
 # Thêm đường dẫn cha vào sys.path để import config
-from config import TRACKER_URL, DEFAULT_PEER_PORT, DOWNLOAD_DIR, METAINFO_DIR
+from config import TRACKER_URL, DEFAULT_PEER_PORT, DOWNLOAD_DIR, METAINFO_DIR, TRACKER_HOST, TRACKER_PORT, TRACKER_URL, WEB_SERVER_PORT
 from piece_manager import PieceManager
 from peer_connection import PeerConnection
 
@@ -591,19 +591,19 @@ class Peer:
             uploaded = piece_manager.bytes_uploaded
             left = piece_manager.bytes_left
             
-            # Parse URL tracker để lấy host và port
+            """# Parse URL tracker để lấy host và port
             tracker_parts = self.tracker_url.replace("http://", "").split(":")
             tracker_host = tracker_parts[0]
             if len(tracker_parts) > 1:
                 port_part = tracker_parts[1].split("/")[0]  # Lấy chỉ phần port
                 tracker_port = int(port_part)
             else:
-                tracker_port = 8000  # Port mặc định
+                tracker_port = 8000  # Port mặc định"""
             
             # Tạo socket và kết nối đến tracker
             tracker_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             tracker_socket.settimeout(10)
-            tracker_socket.connect((tracker_host, tracker_port))
+            tracker_socket.connect((TRACKER_HOST, TRACKER_PORT))
             
             # Tạo payload
             request = {
@@ -653,6 +653,12 @@ class Peer:
                 logging.error("Không nhận được response từ tracker")
                 return []
                 
+        except requests.exceptions.ConnectionError:
+            logging.error(f"Không thể kết nối đến tracker (server không hoạt động?)")
+            return []
+        except json.JSONDecodeError as e:
+            logging.error(f"Lỗi khi parse JSON từ tracker: {e}. Response: '{response.text}'")
+            return []
         except Exception as e:
             logging.error(f"Lỗi khi kết nối đến tracker: {e}")
             return []

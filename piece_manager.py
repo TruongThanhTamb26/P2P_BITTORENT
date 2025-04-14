@@ -80,7 +80,6 @@ class PieceManager:
         self.requested_pieces = {}
         self.bytes_downloaded = 0
         self.bytes_uploaded = 0
-        self.progress = 0
         
         # Xóa file progress nếu có
         progress_file = Path(self.download_dir) / self.info_hash / "progress.json"
