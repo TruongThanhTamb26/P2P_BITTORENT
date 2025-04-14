@@ -240,14 +240,85 @@ class TrackerHandler(BaseHTTPRequestHandler):
     
     def do_GET(self):
         """Xử lý GET request"""
-        # Hiển thị thông tin tổng quan khi truy cập trang chủ
-        self._send_json_response({
-            "torrents": len(peer_registry),
-            "peers": sum(len(peers) for peers in peer_registry.values()), 
-            "seeders": sum(sum(1 for p in peers if p["left"] == 0) for peers in peer_registry.values()),
-            "leechers": sum(sum(1 for p in peers if p["left"] > 0) for peers in peer_registry.values())
-        })
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+
+        def get_torrents_list():
+            """Lấy danh sách các torrent từ thư mục metainfo"""
+            torrents = []
+            
+            try:
+                for file_path in METAINFO_DIR.glob("*.torrent.json"):
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            metainfo = json.load(f)
+                            
+                        torrents.append({
+                            "info_hash": metainfo.get("info_hash"),
+                            "name": metainfo.get("name"),
+                            "size": sum(file.get("length", 0) for file in metainfo.get("files", [])),
+                            "creation_date": metainfo.get("creation_date"),
+                            "piece_count": metainfo.get("piece_count")
+                        })
+                    except Exception as e:
+                        logging.error(f"Lỗi khi đọc file {file_path}: {e}")
+            except Exception as e:
+                logging.error(f"Lỗi khi quét thư mục metainfo: {e}")
+            
+            return {"torrents": torrents}
+
+        def get_metainfo(info_hash):
+            """Lấy thông tin metainfo cho một torrent cụ thể"""
+            if not info_hash:
+                return None
+            
+            try:
+                # Đảm bảo thư mục metainfo tồn tại
+                if not METAINFO_DIR.exists():
+                    logging.error(f"Thư mục metainfo không tồn tại: {METAINFO_DIR}")
+                    return None
+                    
+                # Tìm file metainfo dựa vào info_hash
+                for file_path in METAINFO_DIR.glob("*.torrent.json"):
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            metainfo = json.load(f)
+                            
+                        if metainfo.get("info_hash") == info_hash:
+                            return metainfo
+                    except Exception as e:
+                        logging.error(f"Lỗi khi đọc file {file_path}: {e}")
+                        continue
+            except Exception as e:
+                logging.error(f"Lỗi khi tìm metainfo: {e}")
+            
+            return None
+        
+        if path == '/':
+            # Trả về thông tin tổng quan
+            self._send_json_response({
+                "torrents": len(peer_registry),
+                "peers": sum(len(peers) for peers in peer_registry.values()), 
+                "seeders": sum(sum(1 for p in peers if p["left"] == 0) for peers in peer_registry.values()),
+                "leechers": sum(sum(1 for p in peers if p["left"] > 0) for peers in peer_registry.values())
+            })
+        elif path == '/torrents':
+            # Trả về danh sách torrents
+            response = get_torrents_list()
+            self._send_json_response(response)
+        elif path.startswith('/metainfo/'):
+            # Trả về metainfo cho một torrent cụ thể
+            info_hash = path.split('/')[2]
+            response = get_metainfo(info_hash)
+            
+            if response:
+                self._send_json_response(response)
+            else:
+                self._send_json_response({"error": "Torrent not found"}, 404)
+        else:
+            self._send_json_response({"error": "Not found"}, 404)
     
+    # Trong class TrackerHandler của tracker_server.py
     def do_POST(self):
         """Xử lý POST request"""
         parsed_url = urllib.parse.urlparse(self.path) 
@@ -257,6 +328,44 @@ class TrackerHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0)) 
         post_data = self.rfile.read(content_length) 
 
+        def handle_upload_metainfo(data):
+            """Xử lý yêu cầu upload metainfo từ peer
+            
+            Args:
+                data: Thông tin metainfo từ peer
+                
+            Returns:
+                dict: Kết quả xử lý
+            """
+            try:
+                # Kiểm tra xem dữ liệu có đầy đủ không
+                metainfo = data.get("metainfo")
+                if not metainfo:
+                    return {"success": False, "reason": "Thiếu thông tin metainfo"}
+                
+                # Lấy info_hash và name từ metainfo
+                info_hash = metainfo.get("info_hash")
+                name = metainfo.get("name")
+                
+                if not info_hash or not name:
+                    return {"success": False, "reason": "Metainfo thiếu info_hash hoặc name"}
+                
+                # Lưu metainfo vào file
+                metainfo_path = METAINFO_DIR / f"{name}.torrent.json"
+                with open(metainfo_path, 'w', encoding='utf-8') as f:
+                    json.dump(metainfo, f, indent=2)
+                
+                logging.info(f"Đã nhận và lưu metainfo cho torrent: {name} ({info_hash})")
+                
+                return {
+                    "success": True, 
+                    "message": "Đã lưu metainfo thành công",
+                    "info_hash": info_hash
+                }
+            except Exception as e:
+                logging.error(f"Lỗi khi xử lý upload metainfo: {e}")
+                return {"success": False, "reason": str(e)}
+
         try:
             data = json.loads(post_data.decode('utf-8'))
         except json.JSONDecodeError:
@@ -264,12 +373,13 @@ class TrackerHandler(BaseHTTPRequestHandler):
             return
         
         if path == '/register':
-            # Xử lý đăng ký peer
             response = handle_registration(data)
             self._send_json_response(response)
         elif path == '/announce':
-            # Xử lý announce từ peer
             response = handle_announce(data)
+            self._send_json_response(response)
+        elif path == '/upload_metainfo':
+            response = handle_upload_metainfo(data)
             self._send_json_response(response)
         else:
             # Đường dẫn không hợp lệ

@@ -36,7 +36,6 @@ class Peer:
         self.peer_id = self._generate_peer_id()
         self.tracker_url = tracker_url
         self.port = DEFAULT_PEER_PORT
-        self.tracker_url = tracker_url
         
         # Thiết lập thư mục
         self.METAINFO_DIR = Path(METAINFO_DIR)
@@ -53,13 +52,16 @@ class Peer:
         self.server_socket = None
         self._start_server()
         
-        # Load danh sách torrent từ thư mục metainfo
-        self._load_torrents()
-
         # Đăng ký với tracker khi khởi động
         if not self.register_with_tracker():
             logging.warning("Không thể đăng ký với tracker. Một số chức năng có thể bị hạn chế.")
-
+        
+        # Tải danh sách torrent từ tracker
+        try:
+            self.load_torrents_from_tracker()
+        except Exception as e:
+            logging.error(f"Không thể tải danh sách torrent từ tracker: {e}")
+        
     def _generate_peer_id(self):
         """Tạo ID ngẫu nhiên cho peer"""
         import random
@@ -206,45 +208,83 @@ class Peer:
             except:
                 pass
     
-    def _load_torrents(self):
-        """Tải thông tin torrent từ thư mục metainfo"""
-        # Đọc tất cả file .torrent.json từ thư mục metainfo
-        for torrent_file in self.METAINFO_DIR.glob("*.torrent.json"):
-            try:
-                with open(torrent_file, 'r', encoding='utf-8') as f:
-                    metainfo = json.load(f)
-                
-                info_hash = metainfo.get("info_hash")
-                name = metainfo.get("name", "Unknown")
-                
-                if not info_hash:
-                    logging.warning(f"File {torrent_file.name} không có info_hash")
-                    continue
-                
-                # Tạo PieceManager cho torrent này
-                piece_manager = PieceManager(
-                    info_hash=info_hash,
-                    piece_length=metainfo.get("piece_length", 512*1024),
-                    piece_hashes=metainfo.get("pieces", []),
-                    files=metainfo.get("files", []),
-                    DOWNLOAD_DIR=self.DOWNLOAD_DIR
-                )
-                
-                # Kiểm tra tiến độ tải xuống hiện tại
-                piece_manager.load_progress()
-                
-                # Lưu thông tin torrent
-                self.torrents[info_hash] = {
-                    "name": name,
-                    "status": "stopped",
-                    "piece_manager": piece_manager,
-                    "metainfo": metainfo
-                }
-                logging.info(f"Đã tải torrent: {name} ({info_hash})")
-            
-            except Exception as e:
-                logging.error(f"Lỗi khi đọc file {torrent_file.name}: {e}")
     
+    def load_torrents_from_tracker(self):
+        """Tải danh sách torrent từ tracker"""
+        try:
+            tracker_base_url = self.tracker_url.replace("/announce", "")
+            torrents_url = f"{tracker_base_url}/torrents"
+            
+            response = requests.get(torrents_url, timeout=10)
+            
+            if response.status_code == 200:
+                torrents_data = response.json().get("torrents", [])
+                loaded_count = 0
+                
+                # Đồng bộ metainfo files
+                for torrent in torrents_data:
+                    info_hash = torrent.get("info_hash")
+                    name = torrent.get("name")
+                    
+                    # Bỏ qua nếu đã có torrent này
+                    if info_hash in self.torrents:
+                        continue
+                    
+                    # Kiểm tra xem đã có metainfo chưa
+                    torrent_file = self.METAINFO_DIR / f"{name}.torrent.json"
+                    
+                    try:
+                        # Cố gắng tải metainfo
+                        metainfo = None
+                        if torrent_file.exists():
+                            # Tải từ file nếu có
+                            with open(torrent_file, 'r', encoding='utf-8') as f:
+                                metainfo = json.load(f)
+                        else:
+                            # Tải metainfo từ tracker
+                            metainfo_url = f"{tracker_base_url}/metainfo/{info_hash}"
+                            metainfo_response = requests.get(metainfo_url, timeout=10)
+                            
+                            if metainfo_response.status_code == 200:
+                                metainfo = metainfo_response.json()
+                                
+                                # Lưu metainfo
+                                with open(torrent_file, 'w', encoding='utf-8') as f:
+                                    json.dump(metainfo, f, indent=2)
+                                
+                                logging.info(f"Đã tải metainfo từ tracker: {name}")
+                        
+                        # Tạo PieceManager và thêm vào self.torrents
+                        if metainfo:
+                            piece_manager = PieceManager(
+                                info_hash=info_hash,
+                                piece_length=metainfo.get("piece_length", 512*1024),
+                                piece_hashes=metainfo.get("pieces", []),
+                                files=metainfo.get("files", []),
+                                DOWNLOAD_DIR=self.DOWNLOAD_DIR
+                            )
+                            
+                            with self.lock:
+                                self.torrents[info_hash] = {
+                                    "name": name,
+                                    "status": "stopped",
+                                    "piece_manager": piece_manager,
+                                    "metainfo": metainfo
+                                }
+                                
+                            loaded_count += 1
+                    except Exception as e:
+                        logging.error(f"Lỗi khi tải metainfo cho {name}: {e}")
+                
+                logging.info(f"Đã tải {loaded_count} torrent từ tracker")
+                return True
+            else:
+                logging.error(f"Không thể tải danh sách torrent từ tracker: HTTP {response.status_code}")
+                return False
+        except Exception as e:
+            logging.error(f"Lỗi khi tải torrents từ tracker: {e}")
+            return False
+
     def create_torrent(self, file_paths, name=None, piece_length=512*1024):
         """Tạo torrent từ file và bắt đầu chia sẻ (upload)"""
         if not file_paths:
@@ -330,6 +370,35 @@ class Peer:
                 
                 # Thông báo cho tracker
                 self._announce_to_tracker(info_hash, "completed")
+
+                # Gửi metainfo đến tracker
+                try:
+                    tracker_base_url = self.tracker_url.replace("/announce", "")
+                    upload_url = f"{tracker_base_url}/upload_metainfo"
+                    
+                    # Chuẩn bị dữ liệu gửi đi
+                    upload_data = {
+                        "metainfo": metainfo,
+                        "peer_id": self.peer_id
+                    }
+                    
+                    # Gửi request
+                    upload_response = requests.post(
+                        upload_url,
+                        json=upload_data,
+                        timeout=10
+                    )
+                    
+                    if upload_response.status_code == 200:
+                        response_data = upload_response.json()
+                        if response_data.get("success"):
+                            logging.info(f"Đã gửi metainfo đến tracker thành công")
+                        else:
+                            logging.error(f"Lỗi khi gửi metainfo: {response_data.get('reason')}")
+                    else:
+                        logging.error(f"Lỗi khi gửi metainfo đến tracker: HTTP {upload_response.status_code}")
+                except Exception as e:
+                    logging.error(f"Lỗi khi gửi metainfo đến tracker: {e}")
                 
                 logging.info(f"Đã tạo torrent mới: {name} ({info_hash})")
                 return True, info_hash
@@ -749,11 +818,12 @@ class PeerGUI:
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(fill=tk.X, pady=10)
         
-        # Các nút điều khiển
+         # Các nút điều khiển
         ttk.Button(control_frame, text="Upload", command=self._upload_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Download", command=self._start_torrent).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Dừng", command=self._stop_torrent).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Chi tiết", command=self._show_details).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Refresh", command=self._refresh_torrents).pack(side=tk.LEFT, padx=5)  # Thêm nút refresh
         ttk.Button(control_frame, text="Thoát", command=self._exit_application).pack(side=tk.RIGHT, padx=5)
             # Thêm phương thức mới để xử lý double-click
     def _on_torrent_double_click(self, event):
@@ -763,6 +833,19 @@ class PeerGUI:
         if item:
             # Hiển thị chi tiết torrent
             self._show_details()
+
+    def _refresh_torrents(self):
+        """Cập nhật danh sách torrent từ tracker"""
+        try:
+            if self.peer.load_torrents_from_tracker():
+                messagebox.showinfo("Thông báo", "Đã cập nhật danh sách torrent từ tracker")
+            else:
+                messagebox.showwarning("Cảnh báo", "Không thể cập nhật danh sách torrent từ tracker")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Lỗi khi cập nhật danh sách torrent: {str(e)}")
+        
+        # Cập nhật giao diện
+        self._update_torrent_list()
     
     def _upload_file(self):
         """Chọn file để upload và tạo torrent"""
