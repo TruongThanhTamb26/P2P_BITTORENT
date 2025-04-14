@@ -258,13 +258,21 @@ class Peer:
                             # Tính tổng kích thước file
                             total_size = sum(file.get("length", 0) for file in metainfo.get("files", []))
                             
+                            piece_manager = PieceManager(
+                                info_hash=info_hash,
+                                piece_length=metainfo.get("piece_length", 512*1024),
+                                piece_hashes=metainfo.get("pieces", []),
+                                files=metainfo.get("files", []),
+                                DOWNLOAD_DIR=self.DOWNLOAD_DIR
+                            )
+                            
                             with self.lock:
                                 self.torrents[info_hash] = {
                                     "name": name,
                                     "status": "stopped",
                                     "metainfo": metainfo,
                                     "size": total_size,
-                                    "piece_manager": None  # Khởi tạo khi bắt đầu download
+                                    "piece_manager": piece_manager
                                 }
                                 
                             loaded_count += 1
@@ -279,7 +287,7 @@ class Peer:
         except Exception as e:
             logging.error(f"Lỗi khi tải torrents từ tracker: {e}")
             return False
-
+    
     def get_torrent_status(self):
         """Lấy danh sách và trạng thái các torrent"""
         result = []
@@ -323,7 +331,7 @@ class Peer:
             download_speed = 0
             upload_speed = 0
             
-            if piece_manager:
+            if piece_manager is not None:
                 progress = piece_manager.progress * 100
                 download_speed = getattr(piece_manager, "download_speed", 0)
                 upload_speed = getattr(piece_manager, "upload_speed", 0)
@@ -357,7 +365,7 @@ class Peer:
                 "piece_count": metainfo.get("piece_count", 0),
                 "piece_length": metainfo.get("piece_length", 0)
             }
-
+       
     def _format_size(self, size_bytes):
         """Format kích thước file theo đơn vị phù hợp"""
         if size_bytes < 1024:
@@ -525,7 +533,7 @@ class Peer:
             piece_hashes.append(piece_hash)
         
         return piece_hashes
-    
+
     def start_torrent(self, info_hash):
         """Bắt đầu tải xuống torrent"""
         with self.lock:
@@ -797,37 +805,31 @@ class Peer:
             logging.error(f"Lỗi khi kết nối đến tracker: {e}")
             return []
 
-    def get_torrent_status(self, info_hash=None):
-        """Lấy trạng thái của một hoặc tất cả các torrent"""
+    
+    def get_torrent_status(self):
+        """Lấy danh sách và trạng thái các torrent"""
+        result = []
+        
         with self.lock:
-            if info_hash:
-                if info_hash not in self.torrents:
-                    return None
+            for info_hash, torrent in self.torrents.items():
+                # Tính toán kích thước
+                size = torrent.get("size", 0)
                 
-                torrent = self.torrents[info_hash]
-                piece_manager = torrent["piece_manager"]
+                # Tính toán tiến độ nếu đang tải
+                progress = 0
+                piece_manager = torrent.get("piece_manager")
+                if piece_manager is not None:  # Thêm kiểm tra nếu piece_manager tồn tại
+                    progress = piece_manager.progress * 100
                 
-                return {
+                result.append({
                     "info_hash": info_hash,
-                    "name": torrent["name"],
-                    "status": torrent["status"],
-                    "progress": piece_manager.progress * 100,  # Phần trăm
-                    "downloaded": piece_manager.bytes_downloaded,
-                    "uploaded": piece_manager.bytes_uploaded,
-                    "left": piece_manager.bytes_left,
-                    "files": torrent["metainfo"].get("files", [])
-                }
-            else:
-                result = []
-                for hash_id, torrent in self.torrents.items():
-                    piece_manager = torrent["piece_manager"]
-                    result.append({
-                        "info_hash": hash_id,
-                        "name": torrent["name"],
-                        "status": torrent["status"],
-                        "progress": piece_manager.progress * 100,  # Phần trăm
-                    })
-                return result
+                    "name": torrent.get("name", "Unknown"),
+                    "status": torrent.get("status", "unknown"),
+                    "size": size,
+                    "progress": progress
+                })
+        
+        return result
 
 class PeerGUI:
     """Giao diện đồ họa cho ứng dụng P2P"""
@@ -835,7 +837,7 @@ class PeerGUI:
     def __init__(self, master):
         self.master = master
         self.master.title("P2P File Sharing")
-        self.master.geometry("800x500")
+        self.master.geometry("800x600")  # Tăng kích thước cửa sổ
         
         # Khởi tạo peer
         self.peer = Peer()
@@ -843,14 +845,18 @@ class PeerGUI:
         # Thiết lập giao diện
         self._setup_ui()
         
-        # Khởi động thread cập nhật UI
-        self._start_update_thread()
-
+        # Tạo giao diện trạng thái download
+        self._create_download_status_ui()
+        
+        # Thiết lập hàng chờ download
+        self._setup_download_queue()
+        
         # Thêm biến để theo dõi torrent đang chọn
         self.selected_info_hash = None
         
         # Thêm event binding cho việc lựa chọn torrent
         self.tree.bind("<<TreeviewSelect>>", self._on_torrent_select)
+        self.tree.bind("<Double-1>", lambda event: self._start_torrent())  # Thêm double-click để download
     
 
     def _on_torrent_select(self, event):
@@ -937,10 +943,9 @@ class PeerGUI:
         control_frame = ttk.Frame(self.master, padding=5)
         control_frame.pack(padx=10, pady=5, fill=tk.X)
         
-        # Tạo các nút điều khiển
+        # Tạo các nút điều khiển - Loại bỏ nút "Dừng"
         ttk.Button(control_frame, text="Upload", command=self._upload_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Download", command=self._start_torrent).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Dừng", command=self._stop_torrent).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Chi tiết", command=self._show_details).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Refresh", command=self._refresh_torrents).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Tìm kiếm", command=self._search_torrent).pack(side=tk.LEFT, padx=5)
@@ -948,13 +953,14 @@ class PeerGUI:
         
         # Thiết lập sự kiện khi chọn torrent
         self.tree.bind("<<TreeviewSelect>>", self._on_torrent_select)
+        self.tree.bind("<Double-1>", lambda event: self._start_torrent())  # Thêm double-click để download
         
         # Khởi tạo các biến
         self.selected_info_hash = None
         
         # Cập nhật danh sách torrent ban đầu
         self._update_torrent_list()
-            # Thêm phương thức mới để xử lý double-click
+    
     def _on_torrent_double_click(self, event):
         """Xử lý khi người dùng double-click vào một torrent"""
         # Lấy item được chọn
@@ -1051,17 +1057,34 @@ class PeerGUI:
                 
             self.selected_info_hash = tags[0]
         
+        # Lấy thông tin torrent
+        torrent_info = None
+        with self.peer.lock:
+            if self.selected_info_hash in self.peer.torrents:
+                torrent_info = self.peer.torrents[self.selected_info_hash]
+        
+        if not torrent_info:
+            messagebox.showwarning("Cảnh báo", "Không tìm thấy thông tin về torrent này")
+            return
+        
+        # Nếu torrent đã đang tải hoặc đã hoàn thành, thông báo cho người dùng
+        if torrent_info["status"] == "downloading":
+            messagebox.showinfo("Thông báo", "Torrent đã đang được tải xuống")
+            return
+        elif torrent_info["status"] == "seeding":
+            messagebox.showinfo("Thông báo", "Torrent đã được tải xuống hoàn tất")
+            return
+        
         # Bắt đầu tải với info_hash đã chọn
         if self.peer.start_torrent(self.selected_info_hash):
-            messagebox.showinfo("Thông báo", "Đã bắt đầu tải torrent")
+            messagebox.showinfo("Thông báo", f"Đã bắt đầu tải torrent: {torrent_info['name']}")
             # Cập nhật danh sách để hiển thị trạng thái mới
             self._update_torrent_list()
         else:
             messagebox.showerror("Lỗi", "Không thể bắt đầu tải torrent")
-            
+           
 
-    def _stop_torrent(self):
-        """Dừng torrent đã chọn"""
+    """def _stop_torrent(self):
         selected = self.tree.selection()
         if not selected:
             messagebox.showinfo("Thông báo", "Vui lòng chọn một torrent")
@@ -1075,7 +1098,7 @@ class PeerGUI:
         if self.peer.stop_torrent(info_hash):
             messagebox.showinfo("Thông báo", "Đã dừng torrent")
         else:
-            messagebox.showerror("Lỗi", "Không thể dừng torrent")
+            messagebox.showerror("Lỗi", "Không thể dừng torrent")"""
     
     def _show_details(self):
         """Hiển thị chi tiết torrent"""
@@ -1136,6 +1159,77 @@ class PeerGUI:
         # Cập nhật theo chu kỳ (mỗi 2 giây)
         self.master.after(2000, self._update_torrent_list)
     
+    def _setup_download_queue(self):
+        """Thiết lập hàng chờ download tự động"""
+        self.download_queue = []
+        self.queue_processing = False
+        
+        def process_queue():
+            if self.queue_processing or not self.download_queue:
+                return
+            
+            self.queue_processing = True
+            info_hash = self.download_queue.pop(0)
+            
+            # Bắt đầu tải torrent này
+            if self.peer.start_torrent(info_hash):
+                # Đợi đến khi tải xong hoặc thất bại
+                def check_status():
+                    torrent = None
+                    with self.peer.lock:
+                        if info_hash in self.peer.torrents:
+                            torrent = self.peer.torrents[info_hash]
+                    
+                    if not torrent:
+                        self.queue_processing = False
+                        process_queue()
+                        return
+                    
+                    if torrent["status"] == "seeding":
+                        logging.info(f"Download hoàn tất: {torrent['name']}")
+                        self.queue_processing = False
+                        process_queue()
+                    else:
+                        self.master.after(5000, check_status)  # Kiểm tra lại sau 5 giây
+                
+                self.master.after(5000, check_status)
+            else:
+                logging.error(f"Không thể bắt đầu tải torrent: {info_hash}")
+                self.queue_processing = False
+                process_queue()
+        
+        # Gán phương thức để sử dụng từ bên ngoài
+        self.add_to_download_queue = lambda info_hash: self.download_queue.append(info_hash) or process_queue()
+
+    def _create_download_status_ui(self):
+        """Tạo giao diện hiển thị trạng thái download"""
+        status_frame = ttk.LabelFrame(self.master, text="Trạng thái Download", padding=5)
+        status_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        # Tạo Progress bar và label
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_bar = ttk.Progressbar(status_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill=tk.X, pady=5)
+        
+        self.status_label = ttk.Label(status_frame, text="Không có download đang diễn ra")
+        self.status_label.pack(pady=5)
+        
+        # Khởi động thread cập nhật trạng thái
+        def update_download_status():
+            if self.selected_info_hash:
+                torrent_info = self.peer.get_torrent_detail(self.selected_info_hash)
+                if torrent_info and torrent_info["status"] in ["downloading", "seeding"]:
+                    self.progress_var.set(torrent_info["progress"])
+                    status_text = f"Đang tải: {torrent_info['name']} - {torrent_info['progress']:.1f}% - {torrent_info['download_speed_formatted']}"
+                    self.status_label.config(text=status_text)
+                else:
+                    self.progress_var.set(0)
+                    self.status_label.config(text="Không có download đang diễn ra")
+            
+            self.master.after(1000, update_download_status)
+        
+        self.master.after(1000, update_download_status)
+
     def _search_torrent(self):
         """Tìm kiếm torrent theo tên"""
         # Tạo hộp thoại tìm kiếm
@@ -1188,6 +1282,7 @@ class PeerGUI:
         
         search_entry.focus_set()
         search_entry.bind("<Return>", lambda e: do_search())
+    
 
     def _start_update_thread(self):
         """Khởi động thread cập nhật UI"""

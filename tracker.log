@@ -1,1 +1,29 @@
 2025-04-14 10:41:02,397 - INFO - Đã reset trạng thái tracker
+2025-04-14 10:41:03,354 - INFO - Hostname: TAMTRUONG
+2025-04-14 10:41:03,354 - INFO - Tracker đang chạy trên cổng 8000...
+2025-04-14 10:41:03,355 - INFO - Thread dọn dẹp peer đã khởi động
+2025-04-14 10:41:11,618 - INFO - Peer mới đăng ký: -PY0001- từ 192.168.189.1:6881
+2025-04-14 10:41:15,999 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 10:41:21,382 - INFO - Peer -PY0001- đã tải xong b64fb8b7 và đăng ký sở hữu
+2025-04-14 10:41:21,399 - INFO - Đã nhận và lưu metainfo cho torrent: ăn mừng.mp4 (b64fb8b7405c5dd2dd599adffec02fcc37e8fe60)
+2025-04-14 10:41:21,400 - INFO - Peer -PY0001- đăng ký sở hữu torrent: ăn mừng.mp4
+2025-04-14 10:41:33,389 - INFO - Peer -PY0001- không còn sở hữu torrent b64fb8b7
+2025-04-14 10:41:33,400 - INFO - Đã xóa torrent ăn mừng.mp4 (b64fb8b7) vì không còn peer sở hữu
+2025-04-14 10:41:33,400 - INFO - Peer -PY0001- đã dừng tải b64fb8b7
+2025-04-14 10:42:40,419 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 10:42:56,378 - INFO - Peer mới đăng ký: -PY0001- từ 192.168.189.1:6881
+2025-04-14 10:43:01,862 - INFO - Peer -PY0001- đã tải xong b48f5c30 và đăng ký sở hữu
+2025-04-14 10:43:01,879 - INFO - Đã nhận và lưu metainfo cho torrent: băm phá bóng.MOV (b48f5c300d627daadf0bbc18f34a06ccacd9263a)
+2025-04-14 10:43:01,880 - INFO - Peer -PY0001- đăng ký sở hữu torrent: băm phá bóng.MOV
+2025-04-14 10:43:34,735 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 10:43:52,422 - INFO - Peer -PY0001- không còn sở hữu torrent b48f5c30
+2025-04-14 10:43:52,423 - INFO - Đã xóa torrent băm phá bóng.MOV (b48f5c30) vì không còn peer sở hữu
+2025-04-14 10:43:52,423 - INFO - Peer -PY0001- đã dừng tải b48f5c30
+2025-04-14 10:43:54,143 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 10:44:02,187 - INFO - Peer -PY0001- đã tải xong bf1c2018 và đăng ký sở hữu
+2025-04-14 10:44:02,222 - INFO - Đã nhận và lưu metainfo cho torrent: tracker.log (bf1c2018188d5f3375d08142ff60bc7cbbc9dff3)
+2025-04-14 10:44:02,223 - INFO - Peer -PY0001- đăng ký sở hữu torrent: tracker.log
+2025-04-14 10:44:09,642 - INFO - Peer mới đăng ký: -PY0001- từ 192.168.189.1:6881
+2025-04-14 10:46:48,799 - INFO - Peer mới đăng ký: -PY0001- từ 192.168.189.1:6881
+2025-04-14 10:57:36,684 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
+2025-04-14 10:57:45,343 - INFO - Peer mới đăng ký: -PY0001- từ 10.28.128.90:6881
