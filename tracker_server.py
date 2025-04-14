@@ -291,12 +291,18 @@ def start_cleanup_thread():
 
 def run_server(port=8000):
     """Khởi động HTTP server"""
-    server_address = ('', port)
-    httpd = HTTPServer(server_address, TrackerHandler)
+    server_address = ('0.0.0.0', port)
+    httpd = HTTPServer(server_address, TrackerHandler) 
     logging.info(f"Tracker đang chạy trên cổng {port}...")
 
-    server = HTTPServer(('0.0.0.0', TRACKER_PORT), TrackerHandler)
-    server.serve_forever()
+    # Thông tin mạng
+    import socket
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+    logging.info(f"Hostname: {hostname}")
+    logging.info(f"Server IP: {local_ip}")
+    logging.info(f"Tracker đang chạy trên cổng {port}...")
+    
     
     # Bắt đầu thread dọn dẹp
     start_cleanup_thread()

@@ -581,7 +581,7 @@ class Peer:
             return False
     
     def _announce_to_tracker(self, info_hash, event):
-        """Thông báo với tracker qua socket và nhận danh sách peers"""
+        """Thông báo với tracker và nhận danh sách peers"""
         try:
             torrent = self.torrents[info_hash]
             piece_manager = torrent["piece_manager"]
@@ -591,73 +591,51 @@ class Peer:
             uploaded = piece_manager.bytes_uploaded
             left = piece_manager.bytes_left
             
-            """# Parse URL tracker để lấy host và port
-            tracker_parts = self.tracker_url.replace("http://", "").split(":")
-            tracker_host = tracker_parts[0]
-            if len(tracker_parts) > 1:
-                port_part = tracker_parts[1].split("/")[0]  # Lấy chỉ phần port
-                tracker_port = int(port_part)
-            else:
-                tracker_port = 8000  # Port mặc định"""
-            
-            # Tạo socket và kết nối đến tracker
-            tracker_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            tracker_socket.settimeout(10)
-            tracker_socket.connect((TRACKER_HOST, TRACKER_PORT))
-            
-            # Tạo payload
-            request = {
-                "command": "announce",
-                "data": {
-                    "peer_id": self.peer_id,
-                    "info_hash": info_hash,
-                    "ip": socket.gethostbyname(socket.gethostname()),
-                    "port": self.port,
-                    "uploaded": uploaded,
-                    "downloaded": downloaded,
-                    "left": left,
-                    "event": event
-                }
+            # Chuẩn bị dữ liệu 
+            announce_data = {
+                "peer_id": self.peer_id,
+                "info_hash": info_hash,
+                "ip": socket.gethostbyname(socket.gethostname()),
+                "port": self.port,
+                "uploaded": uploaded,
+                "downloaded": downloaded,
+                "left": left,
+                "event": event
             }
             
-            # Gửi request
-            tracker_socket.sendall(json.dumps(request).encode('utf-8') + b'\n')
+            # Gửi request qua HTTP thay vì socket
+            response = requests.post(
+                self.tracker_url,
+                json=announce_data,
+                timeout=10
+            )
             
-            # Nhận response
-            data = b''
-            while True:
-                chunk = tracker_socket.recv(4096)
-                if not chunk:
-                    break
-                data += chunk
-                if b'\n' in data:
-                    break
-            
-            tracker_socket.close()
-            
-            # Xử lý response
-            if data:
-                response = json.loads(data.decode('utf-8').strip())
-                
-                # Kiểm tra lỗi
-                if "failure_reason" in response:
-                    logging.error(f"Tracker báo lỗi: {response['failure_reason']}")
-                    return []
-                
-                # Lấy danh sách peers
-                peers = response.get("peers", [])
-                logging.info(f"Nhận được {len(peers)} peers từ tracker cho {info_hash}")
-                
-                return peers
-            else:
-                logging.error("Không nhận được response từ tracker")
+            if response.status_code != 200:
+                logging.error(f"Tracker phản hồi HTTP {response.status_code}")
                 return []
+            
+            # Phân tích response
+            data = response.json()
+            
+            # Kiểm tra lỗi
+            if "failure_reason" in data:
+                logging.error(f"Tracker báo lỗi: {data['failure_reason']}")
+                return []
+            
+            # Lấy danh sách peers
+            peers = data.get("peers", [])
+            logging.info(f"Nhận được {len(peers)} peers từ tracker cho {info_hash}")
+            
+            return peers
                 
         except requests.exceptions.ConnectionError:
             logging.error(f"Không thể kết nối đến tracker (server không hoạt động?)")
             return []
+        except requests.exceptions.Timeout:
+            logging.error(f"Kết nối đến tracker bị timeout")
+            return []
         except json.JSONDecodeError as e:
-            logging.error(f"Lỗi khi parse JSON từ tracker: {e}. Response: '{response.text}'")
+            logging.error(f"Lỗi khi parse JSON từ tracker: {e}")
             return []
         except Exception as e:
             logging.error(f"Lỗi khi kết nối đến tracker: {e}")
