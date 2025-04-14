@@ -1,0 +1,7 @@
+2025-04-14 06:45:38,166 - INFO - Đã khởi động server trên cổng 6881
+2025-04-14 06:45:38,166 - INFO - Đăng ký với tracker...
+2025-04-14 06:45:38,171 - INFO - Đăng ký với tracker thành công!
+2025-04-14 06:45:46,716 - ERROR - Lỗi khi kết nối đến tracker: Expecting value: line 1 column 1 (char 0)
+2025-04-14 06:45:46,716 - INFO - Đã tạo torrent mới: BK-League mùa 2.mp4 (421ec6cf49d7efe284f69193802314097321b687)
+2025-04-14 06:45:58,534 - ERROR - Lỗi khi xóa dữ liệu: property 'progress' of 'PieceManager' object has no setter
+2025-04-14 06:45:58,536 - ERROR - Lỗi khi kết nối đến tracker: Expecting value: line 1 column 1 (char 0)
