@@ -1,5 +1,34 @@
-2025-04-14 11:43:47,243 - INFO - Đã khởi động server trên cổng 6881
-2025-04-14 11:43:47,246 - INFO - Đăng ký với tracker...
-2025-04-14 11:43:47,251 - INFO - Đăng ký với tracker thành công!
-2025-04-14 11:43:47,254 - INFO - Đã tải 0 torrent từ tracker
-2025-04-14 11:43:50,211 - INFO - Đã xóa tất cả dữ liệu download
+2025-04-14 12:08:46,023 - INFO - Đã khởi động server trên cổng 6881
+2025-04-14 12:08:46,027 - INFO - Đăng ký với tracker...
+2025-04-14 12:08:46,031 - INFO - Đăng ký với tracker thành công!
+2025-04-14 12:08:46,036 - INFO - Đã tải 1 torrent từ tracker
+2025-04-14 12:08:49,674 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:49,675 - INFO - Bắt đầu kết nối đến 1 peers cho HK1_2122_VideoStreamingApplication_Assig1.pdf
+2025-04-14 12:08:49,676 - INFO - Đã bắt đầu tải torrent: HK1_2122_VideoStreamingApplication_Assig1.pdf
+2025-04-14 12:08:49,676 - INFO - Kết nối đến peer -PY0001- (10.28.128.90:6881)
+2025-04-14 12:08:49,709 - INFO - Kết nối thành công đến peer -PY0001-P1whwLaJoGrl
+2025-04-14 12:08:49,709 - INFO - Đã kết nối thành công đến peer -PY0001-
+2025-04-14 12:08:49,709 - INFO - Bắt đầu download từ -PY0001-
+2025-04-14 12:08:49,760 - INFO - Peer -PY0001- unchoked us - có thể yêu cầu pieces
+2025-04-14 12:08:50,710 - INFO - Tiến độ download HK1_2122_VideoStreamingApplication_Assig1.pdf: 0.0%
+2025-04-14 12:08:50,710 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:50,725 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:51,726 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:51,739 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:52,740 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:52,756 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:53,757 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:53,772 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:54,773 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:54,788 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:55,789 - INFO - Tiến độ download HK1_2122_VideoStreamingApplication_Assig1.pdf: 0.0%
+2025-04-14 12:08:55,789 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:55,802 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:56,803 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:56,819 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:57,820 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:57,824 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:58,825 - INFO - Yêu cầu danh sách peers mới từ tracker...
+2025-04-14 12:08:58,852 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063
+2025-04-14 12:08:59,624 - INFO - Đã xóa tất cả dữ liệu download
+2025-04-14 12:08:59,650 - INFO - Nhận được 1 peers từ tracker cho e1e524d4caf811c2c70970373e1dcc4963465063

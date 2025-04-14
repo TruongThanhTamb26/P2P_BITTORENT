@@ -125,6 +125,21 @@ class PieceManager:
                 os.remove(progress_file)
             except:
                 pass
+
+    def has_piece(self, piece_index):
+        """Kiểm tra xem có piece này không"""
+        if 0 <= piece_index < len(self.have_pieces):
+            return self.have_pieces[piece_index]
+        return False
+
+    def is_piece_requested(self, piece_index):
+        """Kiểm tra xem piece đã được yêu cầu chưa"""
+        return piece_index in self.requested_pieces
+
+    def is_piece_complete(self, piece_index):
+        """Kiểm tra xem piece đã hoàn thành chưa"""
+        return self.have_pieces[piece_index] if 0 <= piece_index < len(self.have_pieces) else False
+    
     
     @property
     def bytes_left(self):
@@ -143,6 +158,20 @@ class PieceManager:
         """Kiểm tra xem đã tải xong chưa"""
         with self.lock:
             return all(self.have_pieces)
+        
+    def get_piece_size(self, piece_index):
+        """Trả về kích thước của piece"""
+        with self.lock:
+            if piece_index < 0 or piece_index >= self.piece_count:
+                return 0
+                
+            # Với piece cuối, kích thước có thể nhỏ hơn
+            if piece_index == self.piece_count - 1:
+                remaining = self.total_size % self.piece_length
+                if remaining > 0:
+                    return remaining
+            
+            return self.piece_length
     
     def get_next_request(self, peer_has_pieces):
         """Lấy piece tiếp theo để yêu cầu từ peer"""
@@ -162,49 +191,75 @@ class PieceManager:
             return piece_index
         
     def receive_block(self, piece_index, begin, data):
-        """Nhận và lưu một block của piece."""
+        """Nhận và lưu một block của piece"""
         with self.lock:
             # Kiểm tra tính hợp lệ
-            if piece_index >= len(self.pieces):
+            if piece_index < 0 or piece_index >= self.piece_count:
                 logging.error(f"Piece index không hợp lệ: {piece_index}")
                 return False
                 
-            piece = self.pieces[piece_index]
+            # Tạo thư mục pieces nếu chưa tồn tại
+            os.makedirs(self.pieces_dir, exist_ok=True)
             
-            # Kiểm tra offset
-            if begin > len(piece.data):
-                logging.error(f"Block offset không hợp lệ: {begin}")
-                return False
+            # Đường dẫn đến file piece
+            piece_file = self.pieces_dir / f"piece_{piece_index}"
+            
+            try:
+                # Nếu file piece chưa tồn tại, tạo file trống có kích thước phù hợp
+                if not piece_file.exists():
+                    piece_size = self.get_piece_size(piece_index)
+                    with open(piece_file, 'wb') as f:
+                        f.write(b'\0' * piece_size)
                 
-            # Lưu data vào đúng vị trí
-            end = begin + len(data)
-            if end > len(piece.data):
-                logging.error(f"Block vượt quá kích thước piece: {end} > {len(piece.data)}")
-                return False
+                # Ghi block vào đúng vị trí trong file piece
+                with open(piece_file, 'r+b') as f:
+                    f.seek(begin)
+                    f.write(data)
                 
-            # Sao chép dữ liệu
-            piece.data[begin:end] = data
-            piece.downloaded_bytes += len(data)
-            self.bytes_downloaded += len(data)
-            
-            # Kiểm tra nếu piece đã hoàn thành
-            if piece.downloaded_bytes == piece.length:
-                # Xác minh hash
-                if self._verify_piece(piece_index):
-                    piece.complete = True
-                    self.completed_pieces += 1
-                    self._write_piece_to_file(piece_index)
-                    logging.info(f"Piece {piece_index} đã hoàn thành và xác thực")
-                    return True
-                else:
-                    # Hash không khớp, reset piece
-                    logging.error(f"Piece {piece_index} hash không khớp, tải lại")
-                    piece.data = bytearray(piece.length)
-                    piece.downloaded_bytes = 0
-                    return False
-            
-            return True
+                # Kiểm tra xem piece đã hoàn thành chưa
+                self._check_piece_complete(piece_index)
+                
+                return True
+                
+            except Exception as e:
+                logging.error(f"Lỗi khi lưu block: {e}")
+                return False
     
+    def _check_piece_complete(self, piece_index):
+        """Kiểm tra xem piece đã hoàn thành và hợp lệ chưa"""
+        piece_file = self.pieces_dir / f"piece_{piece_index}"
+        
+        if not piece_file.exists():
+            return False
+            
+        # Đọc toàn bộ piece
+        with open(piece_file, 'rb') as f:
+            data = f.read()
+        
+        # Kiểm tra kích thước
+        expected_size = self.get_piece_size(piece_index)
+        if len(data) != expected_size:
+            return False
+        
+        # Kiểm tra hash nếu có
+        if self.piece_hashes and piece_index < len(self.piece_hashes):
+            piece_hash = hashlib.sha1(data).hexdigest()
+            if piece_hash != self.piece_hashes[piece_index]:
+                logging.warning(f"Piece {piece_index} hash không khớp")
+                return False
+        
+        # Đánh dấu piece đã hoàn thành
+        self.have_pieces[piece_index] = True
+        self.pieces[piece_index].complete = True
+        self.pieces[piece_index].downloaded_bytes = len(data)
+        self.bytes_downloaded += len(data)
+        
+        if self.is_complete():
+            # Nếu đã tải xong tất cả, lắp ghép các file
+            self._assemble_files()
+        
+        return True
+
     def receive_piece(self, piece_index, data):
         """Nhận và lưu piece đã tải xuống"""
         with self.lock:
