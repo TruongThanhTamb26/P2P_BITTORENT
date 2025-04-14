@@ -94,7 +94,7 @@ class Peer:
             # Chuẩn bị dữ liệu đăng ký
             register_data = {
                 "peer_id": self.peer_id,
-                "ip": self.ip,
+                "ip": socket.gethostbyname(socket.gethostname()),
                 "port": self.port
             }
             

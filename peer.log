@@ -1,10 +1,3 @@
-2025-04-14 07:09:40,974 - INFO - Đã khởi động server trên cổng 6881
-2025-04-14 07:09:40,975 - INFO - Đăng ký với tracker...
-2025-04-14 07:09:40,984 - INFO - Đăng ký với tracker thành công!
-2025-04-14 07:09:51,736 - ERROR - Lỗi khi kết nối đến tracker: Expecting value: line 1 column 1 (char 0)
-2025-04-14 07:09:51,736 - INFO - Đã tạo torrent mới: ăn mừng.mp4 (d7128d463df99f9fd76b3b0bef4844d454b04bdd)
-2025-04-14 07:13:01,443 - ERROR - Lỗi khi kết nối đến tracker: Expecting value: line 1 column 1 (char 0)
-2025-04-14 07:13:01,443 - INFO - Đã tạo torrent mới: băm phá bóng.MOV (379f2cca7480ab8272462ad6d24f0e3ebe519802)
-2025-04-14 07:13:35,267 - ERROR - Lỗi khi xóa dữ liệu: property 'progress' of 'PieceManager' object has no setter
-2025-04-14 07:13:35,282 - ERROR - Lỗi khi kết nối đến tracker: Expecting value: line 1 column 1 (char 0)
-2025-04-14 07:13:35,298 - ERROR - Lỗi khi kết nối đến tracker: Expecting value: line 1 column 1 (char 0)
+2025-04-14 09:47:18,267 - INFO - Đã khởi động server trên cổng 6881
+2025-04-14 09:47:18,271 - INFO - Đăng ký với tracker...
+2025-04-14 09:47:18,275 - INFO - Đăng ký với tracker thành công!
