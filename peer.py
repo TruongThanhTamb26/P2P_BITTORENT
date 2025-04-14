@@ -235,29 +235,26 @@ class Peer:
                     try:
                         # Cố gắng tải metainfo
                         metainfo = None
+                        
+                        # Nếu file metainfo đã tồn tại cục bộ
                         if torrent_file.exists():
-                            # Tải từ file nếu có
                             with open(torrent_file, 'r', encoding='utf-8') as f:
                                 metainfo = json.load(f)
                         else:
-                            # Tải metainfo từ tracker
+                            # Lấy metainfo từ tracker
                             metainfo_url = f"{tracker_base_url}/metainfo/{info_hash}"
                             metainfo_response = requests.get(metainfo_url, timeout=10)
                             
                             if metainfo_response.status_code == 200:
                                 metainfo = metainfo_response.json()
                                 
-                                # Lưu metainfo
+                                # Lưu metainfo vào file local
                                 with open(torrent_file, 'w', encoding='utf-8') as f:
                                     json.dump(metainfo, f, indent=2)
-                                
-                                logging.info(f"Đã tải metainfo từ tracker: {name}")
                         
-                        # Tạo PieceManager và thêm vào self.torrents
+                        # Nếu đã có metainfo, tạo torrent trong hệ thống
                         if metainfo:
-                            # Tính tổng kích thước file
-                            total_size = sum(file.get("length", 0) for file in metainfo.get("files", []))
-                            
+                            # Tạo piece manager
                             piece_manager = PieceManager(
                                 info_hash=info_hash,
                                 piece_length=metainfo.get("piece_length", 512*1024),
@@ -266,16 +263,24 @@ class Peer:
                                 DOWNLOAD_DIR=self.DOWNLOAD_DIR
                             )
                             
-                            with self.lock:
-                                self.torrents[info_hash] = {
-                                    "name": name,
-                                    "status": "stopped",
-                                    "metainfo": metainfo,
-                                    "size": total_size,
-                                    "piece_manager": piece_manager
-                                }
-                                
+                            # Tải tiến độ nếu đã tải trước đó
+                            piece_manager.load_progress()
+                            
+                            # Thêm vào danh sách torrent
+                            self.torrents[info_hash] = {
+                                "name": name,
+                                "metainfo": metainfo,
+                                "piece_manager": piece_manager,
+                                "status": "stopped",
+                                "size": sum(f.get("length", 0) for f in metainfo.get("files", []))
+                            }
+                            
+                            # Kiểm tra nếu đã tải xong
+                            if piece_manager.is_complete():
+                                self.torrents[info_hash]["status"] = "seeding"
+                            
                             loaded_count += 1
+                    
                     except Exception as e:
                         logging.error(f"Lỗi khi tải metainfo cho {name}: {e}")
                 

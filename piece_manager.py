@@ -111,20 +111,105 @@ class PieceManager:
                     # Đánh dấu đã hoàn thành
                     self._assemble_files()
 
+    def read_block(self, piece_index, begin, length):
+        """Đọc một block từ piece để gửi cho peer khác
+        
+        Args:
+            piece_index (int): Chỉ số của piece
+            begin (int): Vị trí bắt đầu trong piece
+            length (int): Số byte cần đọc
+            
+        Returns:
+            bytes or None: Dữ liệu cần đọc hoặc None nếu không khả dụng
+        """
+        with self.lock:
+            # Kiểm tra nếu có piece này
+            if not self.has_piece(piece_index):
+                logging.debug(f"Không thể đọc block: chưa có piece {piece_index}")
+                return None
+                
+            try:
+                piece_file = self.pieces_dir / f"piece_{piece_index}"
+                if not piece_file.exists():
+                    logging.error(f"File piece không tồn tại: {piece_file}")
+                    return None
+                    
+                # Đọc dữ liệu từ file piece
+                with open(piece_file, 'rb') as f:
+                    f.seek(begin)
+                    data = f.read(length)
+                    
+                # Cập nhật thống kê upload
+                self.bytes_uploaded += len(data)
+                
+                return data
+            except Exception as e:
+                logging.error(f"Lỗi khi đọc block từ piece {piece_index}: {e}")
+                return None
+
+    def request_block(self, piece_index, begin, length):
+        """Đánh dấu một block cụ thể đang được yêu cầu
+        
+        Args:
+            piece_index (int): Chỉ số của piece
+            begin (int): Vị trí bắt đầu trong piece
+            length (int): Kích thước của block
+        
+        Returns:
+            bool: True nếu thành công, False nếu thất bại
+        """
+        with self.lock:
+            if piece_index < 0 or piece_index >= self.piece_count:
+                return False
+                
+            # Thêm piece vào danh sách đã yêu cầu
+            self.requested_pieces.add(piece_index)
+            return True
+
+    @property
+    def download_speed(self):
+        """Tính tốc độ tải xuống hiện tại (bytes/giây)"""
+        elapsed = time.time() - self.start_time
+        if elapsed > 0:
+            return self.bytes_downloaded / elapsed
+        return 0
+        
+    @property
+    def upload_speed(self):
+        """Tính tốc độ upload hiện tại (bytes/giây)"""
+        elapsed = time.time() - self.start_time
+        if elapsed > 0:
+            return self.bytes_uploaded / elapsed
+        return 0
+
+    def clear_requested_pieces(self):
+        """Xóa tất cả các yêu cầu piece hiện tại"""
+        with self.lock:
+            self.requested_pieces.clear()
+            
+    def get_requested_pieces(self):
+        """Lấy danh sách các piece đang được yêu cầu"""
+        with self.lock:
+            return list(self.requested_pieces)
+
     def reset_progress(self):
         """Reset tiến độ tải xuống về 0"""
-        self.completed_pieces = set()
-        self.requested_pieces = {}
-        self.bytes_downloaded = 0
-        self.bytes_uploaded = 0
-        
-        # Xóa file progress nếu có
-        progress_file = Path(self.download_dir) / self.info_hash / "progress.json"
-        if progress_file.exists():
-            try:
-                os.remove(progress_file)
-            except:
-                pass
+        with self.lock:
+            self.have_pieces = [False] * self.piece_count
+            for piece in self.pieces:
+                piece.complete = False
+                piece.downloaded_bytes = 0
+            self.requested_pieces = set()
+            self.bytes_downloaded = 0
+            self.bytes_uploaded = 0
+            
+            # Xóa file progress nếu có
+            progress_file = Path(self.download_dir) / self.info_hash / "progress.json"
+            if progress_file.exists():
+                try:
+                    os.remove(progress_file)
+                except:
+                    pass
 
     def has_piece(self, piece_index):
         """Kiểm tra xem có piece này không"""
@@ -370,6 +455,27 @@ class PieceManager:
         except Exception as e:
             logging.error(f"Lỗi khi ghép file: {e}")
     
+    def mark_piece_requested(self, piece_index):
+        """Đánh dấu một piece đang được yêu cầu"""
+        with self.lock:
+            if 0 <= piece_index < self.piece_count:
+                self.requested_pieces.add(piece_index)
+
+    def cancel_request(self, piece_index):
+        """Hủy yêu cầu tải xuống một piece"""
+        with self.lock:
+            self.requested_pieces.discard(piece_index)
+
+    def write_block(self, piece_index, begin, data):
+        """Ghi một block dữ liệu vào piece"""
+        # Đây là alias cho receive_block để duy trì tương thích
+        return self.receive_block(piece_index, begin, data)
+
+    def get_missing_pieces(self):
+        """Trả về danh sách các piece chưa được tải xuống"""
+        with self.lock:
+            return [i for i in range(self.piece_count) if not self.have_pieces[i]]
+
     def read_piece(self, piece_index, offset, length):
         """Đọc piece để upload cho peer khác"""
         with self.lock:

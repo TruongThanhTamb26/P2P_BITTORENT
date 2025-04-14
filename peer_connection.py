@@ -145,17 +145,13 @@ class PeerConnection:
             return False
     
     def start(self):
-        """Khởi động thread nhận và gửi message"""
+        """Khởi động thread xử lý kết nối"""
         if not self.connected:
             return False
         
-        # Khởi động thread nhận message
-        receiver_thread = threading.Thread(target=self._receiver_loop, daemon=True)
-        receiver_thread.start()
-        
-        # Gửi message interested
-        self._send_interested()
-        
+        # Chỉ sử dụng một cơ chế xử lý message - ưu tiên dùng download()
+        download_thread = threading.Thread(target=self.download, daemon=True)
+        download_thread.start()
         return True
     
     def _process_bitfield(self, payload):
@@ -176,36 +172,53 @@ class PeerConnection:
         return False
 
     def _handle_piece(self, payload):
-        """Xử lý dữ liệu piece nhận được từ peer"""
+        """Xử lý piece data"""
         try:
             if len(payload) < 8:
                 logging.error(f"Piece payload quá ngắn: {len(payload)} bytes")
                 return
                 
-            # Parse piece data <index><begin><block>
+            # Parse piece data
             piece_index = struct.unpack(">I", payload[0:4])[0]
             begin = struct.unpack(">I", payload[4:8])[0]
             block = payload[8:]
             
-            logging.debug(f"Nhận piece {piece_index}, offset {begin}, length {len(block)}")
+            logging.info(f"Nhận block: piece {piece_index}, offset {begin}, length {len(block)}")
             
-            # Lưu block vào piece manager
-            success = self.piece_manager.receive_block(piece_index, begin, block)
+            # Lưu block vào file tạm
+            success = self.piece_manager.write_block(piece_index, begin, block)
             
             if success:
-                logging.debug(f"Lưu thành công block: piece {piece_index}, offset {begin}, length {len(block)}")
+                logging.info(f"Đã lưu block: piece {piece_index}, offset {begin}")
                 
-                # Kiểm tra nếu piece đã hoàn thành
-                if self.piece_manager.is_piece_complete(piece_index):
-                    logging.info(f"Piece {piece_index} đã hoàn thành")
+                # Kiểm tra tiến độ download
+                progress = self.piece_manager.progress
+                if progress > 0:
+                    logging.info(f"Tiến độ download: {progress*100:.1f}%")
                     
-                    # Gửi HAVE message cho các peer khác
-                    self._send_message(MessageType.HAVE, struct.pack(">I", piece_index))
+                # Yêu cầu piece tiếp theo
+                if self.piece_manager.is_piece_complete(piece_index):
+                    self._request_next_piece()
             else:
-                logging.error(f"Không thể lưu block: piece {piece_index}, offset {begin}")
-                
+                logging.error(f"Lỗi khi lưu block: piece {piece_index}, offset {begin}")
+        
         except Exception as e:
-            logging.error(f"Lỗi khi xử lý piece data: {e}")
+            logging.error(f"Lỗi khi xử lý piece data: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
+
+    def _request_next_piece(self):
+        """Yêu cầu piece tiếp theo sau khi hoàn thành một piece"""
+        # Tìm piece tiếp theo để yêu cầu
+        piece_index = self._select_piece_to_request()
+        
+        if piece_index is not None:
+            logging.info(f"Yêu cầu piece tiếp theo: {piece_index}")
+            self._request_piece(piece_index)
+            return True
+        else:
+            logging.info("Không còn piece nào để yêu cầu")
+            return False
     
     def download(self):
         """Tải xuống dữ liệu từ peer."""
@@ -372,6 +385,36 @@ class PeerConnection:
             except:
                 pass
             logging.info(f"Đã đóng kết nối với peer {self.peer_id[:8]}")
+
+    
+
+    def _handle_request(self, payload):
+        """Xử lý REQUEST message từ peer"""
+        if len(payload) < 12:
+            logging.error("REQUEST message quá ngắn")
+            return
+            
+        piece_index, begin, length = struct.unpack(">III", payload[:12])
+        
+        # Kiểm tra nếu chúng ta có piece được yêu cầu
+        if not self.piece_manager.has_piece(piece_index):
+            logging.debug(f"Peer yêu cầu piece {piece_index} mà chúng ta không có")
+            return
+        
+        # Đọc dữ liệu từ piece manager
+        block_data = self.piece_manager.read_block(piece_index, begin, length)
+        
+        if block_data:
+            # Tạo và gửi PIECE message
+            piece_msg_payload = struct.pack(">II", piece_index, begin) + block_data
+            self._send_message(MessageType.PIECE, piece_msg_payload)
+            
+            # Cập nhật thống kê
+            self.bytes_uploaded += len(block_data)
+            
+            logging.debug(f"Đã gửi piece {piece_index}, offset {begin}, length {len(block_data)}")
+        else:
+            logging.warning(f"Không thể đọc dữ liệu cho piece {piece_index}, offset {begin}")
 
     def _request_piece(self, piece_index):
         """Yêu cầu một piece từ peer"""
