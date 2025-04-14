@@ -208,7 +208,6 @@ class Peer:
             except:
                 pass
     
-    
     def load_torrents_from_tracker(self):
         """Tải danh sách torrent từ tracker"""
         try:
@@ -256,20 +255,16 @@ class Peer:
                         
                         # Tạo PieceManager và thêm vào self.torrents
                         if metainfo:
-                            piece_manager = PieceManager(
-                                info_hash=info_hash,
-                                piece_length=metainfo.get("piece_length", 512*1024),
-                                piece_hashes=metainfo.get("pieces", []),
-                                files=metainfo.get("files", []),
-                                DOWNLOAD_DIR=self.DOWNLOAD_DIR
-                            )
+                            # Tính tổng kích thước file
+                            total_size = sum(file.get("length", 0) for file in metainfo.get("files", []))
                             
                             with self.lock:
                                 self.torrents[info_hash] = {
                                     "name": name,
                                     "status": "stopped",
-                                    "piece_manager": piece_manager,
-                                    "metainfo": metainfo
+                                    "metainfo": metainfo,
+                                    "size": total_size,
+                                    "piece_manager": None  # Khởi tạo khi bắt đầu download
                                 }
                                 
                             loaded_count += 1
@@ -285,6 +280,99 @@ class Peer:
             logging.error(f"Lỗi khi tải torrents từ tracker: {e}")
             return False
 
+    def get_torrent_status(self):
+        """Lấy danh sách và trạng thái các torrent"""
+        result = []
+        
+        with self.lock:
+            for info_hash, torrent in self.torrents.items():
+                # Tính toán kích thước
+                size = torrent.get("size", 0)
+                
+                # Tính toán tiến độ nếu đang tải
+                progress = 0
+                piece_manager = torrent.get("piece_manager")
+                if piece_manager:
+                    progress = piece_manager.progress * 100
+                
+                result.append({
+                    "info_hash": info_hash,
+                    "name": torrent.get("name", "Unknown"),
+                    "status": torrent.get("status", "unknown"),
+                    "size": size,
+                    "progress": progress
+                })
+        
+        return result
+
+    def get_torrent_detail(self, info_hash):
+        """Lấy thông tin chi tiết về một torrent"""
+        with self.lock:
+            if info_hash not in self.torrents:
+                return None
+            
+            torrent = self.torrents[info_hash]
+            metainfo = torrent.get("metainfo", {})
+            piece_manager = torrent.get("piece_manager")
+            
+            # Tính toán các thông số
+            size = torrent.get("size", 0)
+            size_formatted = self._format_size(size)
+            
+            progress = 0
+            download_speed = 0
+            upload_speed = 0
+            
+            if piece_manager:
+                progress = piece_manager.progress * 100
+                download_speed = getattr(piece_manager, "download_speed", 0)
+                upload_speed = getattr(piece_manager, "upload_speed", 0)
+            
+            # Format các thông số
+            download_speed_formatted = self._format_speed(download_speed)
+            upload_speed_formatted = self._format_speed(upload_speed)
+            
+            # Format thông tin file
+            files = []
+            for file_info in metainfo.get("files", []):
+                file_size = file_info.get("length", 0)
+                files.append({
+                    "path": file_info.get("path", "Unknown"),
+                    "size": file_size,
+                    "size_formatted": self._format_size(file_size)
+                })
+            
+            return {
+                "name": torrent.get("name", "Unknown"),
+                "status": torrent.get("status", "unknown"),
+                "size": size,
+                "size_formatted": size_formatted,
+                "progress": progress,
+                "download_speed": download_speed,
+                "download_speed_formatted": download_speed_formatted,
+                "upload_speed": upload_speed,
+                "upload_speed_formatted": upload_speed_formatted,
+                "files": files,
+                "creation_date": metainfo.get("creation_date"),
+                "piece_count": metainfo.get("piece_count", 0),
+                "piece_length": metainfo.get("piece_length", 0)
+            }
+
+    def _format_size(self, size_bytes):
+        """Format kích thước file theo đơn vị phù hợp"""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes/1024:.2f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes/(1024*1024):.2f} MB"
+        else:
+            return f"{size_bytes/(1024*1024*1024):.2f} GB"
+
+    def _format_speed(self, speed_bytes):
+        """Format tốc độ tải/chia sẻ theo đơn vị phù hợp"""
+        return f"{self._format_size(speed_bytes)}/s"
+   
     def create_torrent(self, file_paths, name=None, piece_length=512*1024):
         """Tạo torrent từ file và bắt đầu chia sẻ (upload)"""
         if not file_paths:
@@ -772,59 +860,100 @@ class PeerGUI:
             item = selected[0]
             tags = self.tree.item(item, "tags")
             if tags and tags[0] != "no_torrents":
-                # Chỉ log khi info_hash thay đổi
-                if self.selected_info_hash != tags[0]:
-                    self.selected_info_hash = tags[0]
-                    logging.debug(f"Đã chọn torrent: {self.selected_info_hash}")
-    
+                self.selected_info_hash = tags[0]
+                self._update_torrent_details()
+
+    def _update_torrent_details(self):
+        """Cập nhật thông tin chi tiết về torrent đang chọn"""
+        if not self.selected_info_hash:
+            return
+            
+        # Lấy thông tin chi tiết về torrent
+        torrent_info = self.peer.get_torrent_detail(self.selected_info_hash)
+        if not torrent_info:
+            return
+        
+        # Cập nhật text widget
+        self.info_text.config(state=tk.NORMAL)
+        self.info_text.delete("1.0", tk.END)
+        
+        # Hiển thị thông tin cơ bản
+        details = [
+            f"Tên: {torrent_info.get('name', 'N/A')}",
+            f"Info Hash: {self.selected_info_hash}",
+            f"Kích thước: {torrent_info.get('size_formatted', 'N/A')}",
+            f"Trạng thái: {torrent_info.get('status', 'N/A')}",
+            f"Tiến độ: {torrent_info.get('progress', 0):.1f}%",
+            f"Tốc độ tải: {torrent_info.get('download_speed_formatted', 'N/A')}",
+            f"Tốc độ chia sẻ: {torrent_info.get('upload_speed_formatted', 'N/A')}",
+        ]
+        
+        # Hiển thị danh sách file
+        files = torrent_info.get("files", [])
+        if files:
+            details.append("\nDanh sách file:")
+            for i, file in enumerate(files, 1):
+                details.append(f"{i}. {file.get('path', 'N/A')} - {file.get('size_formatted', 'N/A')}")
+        
+        self.info_text.insert("1.0", "\n".join(details))
+        self.info_text.config(state=tk.DISABLED)
     
     def _setup_ui(self):
         """Thiết lập giao diện người dùng"""
-        # Frame chính
-        main_frame = ttk.Frame(self.master, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # Frame cho torrent list
+        list_frame = ttk.LabelFrame(self.master, text="Danh sách torrent", padding=5)
+        list_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
         
-        # Tiêu đề
-        ttk.Label(main_frame, text="P2P File Sharing", font=("Arial", 16, "bold")).pack(pady=(0, 10))
-        
-        # Frame danh sách torrent
-        list_frame = ttk.LabelFrame(main_frame, text="Danh sách Torrent")
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        # Treeview hiển thị danh sách torrent
-        columns = ("name", "status", "progress")
+        # Tạo treeview để hiển thị danh sách torrent
+        columns = ("name", "size", "status")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="browse")
         
-        # Thiết lập các cột
-        self.tree.heading("name", text="Tên")
+        # Định nghĩa các cột
+        self.tree.heading("name", text="Tên torrent")
+        self.tree.heading("size", text="Kích thước")
         self.tree.heading("status", text="Trạng thái")
-        self.tree.heading("progress", text="Tiến độ")
         
-        self.tree.column("name", width=350)
-        self.tree.column("status", width=100)
-        self.tree.column("progress", width=100)
+        # Thiết lập độ rộng cột
+        self.tree.column("name", width=300, minwidth=200)
+        self.tree.column("size", width=100, minwidth=80)
+        self.tree.column("status", width=100, minwidth=80)
         
-        # Thanh cuộn cho treeview
+        # Thêm scrollbar
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
-        
-        # Thêm bắt sự kiện khi double-click vào một torrent
-        self.tree.bind("<Double-1>", self._on_torrent_double_click)
-        
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Frame điều khiển
-        control_frame = ttk.Frame(main_frame)
-        control_frame.pack(fill=tk.X, pady=10)
+        # Frame cho thông tin chi tiết
+        info_frame = ttk.LabelFrame(self.master, text="Thông tin chi tiết", padding=5)
+        info_frame.pack(padx=10, pady=5, fill=tk.X)
         
-         # Các nút điều khiển
+        # Tạo Text widget để hiển thị thông tin chi tiết
+        self.info_text = tk.Text(info_frame, height=8, wrap=tk.WORD)
+        self.info_text.pack(fill=tk.X)
+        self.info_text.config(state=tk.DISABLED)
+        
+        # Frame cho các nút điều khiển
+        control_frame = ttk.Frame(self.master, padding=5)
+        control_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        # Tạo các nút điều khiển
         ttk.Button(control_frame, text="Upload", command=self._upload_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Download", command=self._start_torrent).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Dừng", command=self._stop_torrent).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Chi tiết", command=self._show_details).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Refresh", command=self._refresh_torrents).pack(side=tk.LEFT, padx=5)  # Thêm nút refresh
+        ttk.Button(control_frame, text="Refresh", command=self._refresh_torrents).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Tìm kiếm", command=self._search_torrent).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Thoát", command=self._exit_application).pack(side=tk.RIGHT, padx=5)
+        
+        # Thiết lập sự kiện khi chọn torrent
+        self.tree.bind("<<TreeviewSelect>>", self._on_torrent_select)
+        
+        # Khởi tạo các biến
+        self.selected_info_hash = None
+        
+        # Cập nhật danh sách torrent ban đầu
+        self._update_torrent_list()
             # Thêm phương thức mới để xử lý double-click
     def _on_torrent_double_click(self, event):
         """Xử lý khi người dùng double-click vào một torrent"""
@@ -985,41 +1114,80 @@ class PeerGUI:
             self.tree.insert("", tk.END, values=("Không có torrent nào", "", ""), tags=("no_torrents",))
             return
         
-        selected_item = None
-        
-        # Thêm các torrent vào danh sách
-        for torrent in torrents:  # torrents là list nên duyệt trực tiếp
-            info_hash = torrent.get("info_hash")
-            name = torrent.get("name", "Unknown")
-            
-            # Định dạng trạng thái
-            status_text = {
-                "stopped": "Dừng",
-                "downloading": "Đang tải",
-                "seeding": "Đang chia sẻ"
-            }.get(torrent.get("status"), "Không xác định")
-            
-            # Định dạng tiến độ
-            progress_text = f"{torrent.get('progress', 0):.1f}%"
+        # Thêm các torrent vào tree
+        for torrent in torrents:
+            # Định dạng kích thước
+            size_mb = torrent["size"] / (1024 * 1024) if torrent.get("size") else 0
+            size_str = f"{size_mb:.2f} MB" if size_mb else "N/A"
             
             # Thêm vào tree
             item_id = self.tree.insert(
-                "", tk.END,
-                values=(name, status_text, progress_text),
-                tags=(info_hash,)
+                "", 
+                tk.END, 
+                values=(torrent["name"], size_str, torrent["status"]), 
+                tags=(torrent["info_hash"],)
             )
             
-            # Nếu đây là item đã chọn trước đó, ghi nhớ để select lại
-            if info_hash == selected_hash:
-                selected_item = item_id
+            # Nếu là torrent đang chọn trước đó, chọn lại
+            if torrent["info_hash"] == selected_hash:
+                self.tree.selection_set(item_id)
+                self.tree.see(item_id)
         
-        
-        # Khôi phục selection
-        if selected_item:
-            self.tree.selection_set(selected_item)
-            self.tree.focus(selected_item)
-            self.tree.see(selected_item)
+        # Cập nhật theo chu kỳ (mỗi 2 giây)
+        self.master.after(2000, self._update_torrent_list)
     
+    def _search_torrent(self):
+        """Tìm kiếm torrent theo tên"""
+        # Tạo hộp thoại tìm kiếm
+        search_dialog = tk.Toplevel(self.master)
+        search_dialog.title("Tìm kiếm Torrent")
+        search_dialog.geometry("400x100")
+        search_dialog.transient(self.master)
+        search_dialog.grab_set()
+        
+        # Frame tìm kiếm
+        search_frame = ttk.Frame(search_dialog, padding=10)
+        search_frame.pack(fill=tk.X)
+        
+        # Entry và nút tìm kiếm
+        ttk.Label(search_frame, text="Nhập tên torrent:").pack(side=tk.LEFT, padx=5)
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=5)
+        
+        def do_search():
+            search_term = search_var.get().strip()
+            if not search_term:
+                messagebox.showwarning("Cảnh báo", "Vui lòng nhập từ khóa tìm kiếm")
+                return
+            
+            # Lấy danh sách torrent từ tracker
+            try:
+                self.peer.load_torrents_from_tracker()
+                self._update_torrent_list()
+                
+                # Highlight các kết quả phù hợp
+                found = False
+                for item in self.tree.get_children():
+                    name = self.tree.item(item, "values")[0].lower()
+                    if search_term.lower() in name:
+                        self.tree.selection_set(item)
+                        self.tree.see(item)
+                        found = True
+                        break  # Chọn kết quả đầu tiên
+                
+                if found:
+                    search_dialog.destroy()
+                else:
+                    messagebox.showinfo("Thông báo", "Không tìm thấy torrent phù hợp")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Lỗi khi tìm kiếm: {str(e)}")
+        
+        ttk.Button(search_frame, text="Tìm", command=do_search).pack(side=tk.LEFT, padx=5)
+        ttk.Button(search_frame, text="Hủy", command=search_dialog.destroy).pack(side=tk.LEFT, padx=5)
+        
+        search_entry.focus_set()
+        search_entry.bind("<Return>", lambda e: do_search())
 
     def _start_update_thread(self):
         """Khởi động thread cập nhật UI"""
