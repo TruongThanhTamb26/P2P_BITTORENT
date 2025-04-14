@@ -7,6 +7,16 @@ import hashlib
 from pathlib import Path
 from config import DOWNLOAD_DIR
 
+class Piece:
+    """Đại diện cho một piece của torrent"""
+    
+    def __init__(self, index, length):
+        self.index = index
+        self.length = length
+        self.data = bytearray(length)
+        self.downloaded_bytes = 0
+        self.complete = False
+
 class PieceManager:
     """Quản lý các piece của torrent và theo dõi tiến độ tải xuống"""
     
@@ -25,6 +35,18 @@ class PieceManager:
         # Tính tổng kích thước và số piece
         self.total_size = sum(f['length'] for f in self.files)
         self.piece_count = len(piece_hashes) if piece_hashes else (self.total_size + piece_length - 1) // piece_length
+
+        # Khởi tạo các piece objects
+        self.pieces = []
+        for i in range(self.piece_count):
+            # Tính kích thước piece
+            if i == self.piece_count - 1:  # Piece cuối cùng
+                piece_size = self.total_size - (self.piece_count - 1) * self.piece_length
+            else:
+                piece_size = self.piece_length
+            
+            self.pieces.append(Piece(i, piece_size))
+        
         
         # Trạng thái các piece
         self.have_pieces = [False] * self.piece_count
@@ -36,12 +58,22 @@ class PieceManager:
         self.start_time = time.time()
         
         # Cho thread safety
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()    
         
         # Tạo thư mục lưu dữ liệu piece tạm thời
         self.pieces_dir = self.torrent_dir / "pieces"
         os.makedirs(self.pieces_dir, exist_ok=True)
     
+    def mark_all_complete(self):
+        """Đánh dấu tất cả piece đã tải xong (dùng cho upload)"""
+        with self.lock:
+            self.have_pieces = [True] * self.piece_count
+            # Đánh dấu từng piece là hoàn thành
+            for piece in self.pieces:
+                piece.complete = True
+                piece.downloaded_bytes = piece.length
+            self.bytes_downloaded = self.total_size
+            
     def load_progress(self):
         """Tải tiến độ tải xuống từ disk"""
         with self.lock:
@@ -60,11 +92,16 @@ class PieceManager:
                         # So sánh với hash đã biết
                         if piece_hash == self.piece_hashes[i]:
                             self.have_pieces[i] = True
+                            self.pieces[i].complete = True  # Cập nhật Piece object
+                            self.pieces[i].downloaded_bytes = len(data)
                             self.bytes_downloaded += len(data)
                     else:
                         # Nếu không có hash để kiểm tra, giả định piece hợp lệ
                         self.have_pieces[i] = True
-                        self.bytes_downloaded += os.path.getsize(piece_file)
+                        piece_size = os.path.getsize(piece_file)
+                        self.pieces[i].complete = True  # Cập nhật Piece object
+                        self.pieces[i].downloaded_bytes = piece_size
+                        self.bytes_downloaded += piece_size
             
             # Nếu đã tải xong tất cả, kiểm tra xem có file cuối cùng không
             if all(self.have_pieces) and self.files:
@@ -88,12 +125,6 @@ class PieceManager:
                 os.remove(progress_file)
             except:
                 pass
-    
-    def mark_all_complete(self):
-        """Đánh dấu tất cả piece đã tải xong (dùng cho upload)"""
-        with self.lock:
-            self.have_pieces = [True] * self.piece_count
-            self.bytes_downloaded = self.total_size
     
     @property
     def bytes_left(self):
@@ -345,4 +376,4 @@ class PieceManager:
     def get_bitfield(self):
         """Trả về mảng bit cho biết những piece nào đã có"""
         with self.lock:
-            return [piece.complete for piece in self.pieces]
+            return self.have_pieces  # Sử dụng have_pieces thay vì pieces
