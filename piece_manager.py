@@ -50,7 +50,7 @@ class PieceManager:
                 piece_file = self.pieces_dir / f"piece_{i}"
                 if piece_file.exists():
                     # Kiểm tra xem piece có hợp lệ không (nếu có hash)
-                    if self.piece_hashes and i < len(self.piece_hashes):
+                    if (self.piece_hashes) and (i < len(self.piece_hashes)):
                         with open(piece_file, 'rb') as f:
                             data = f.read()
                         
@@ -341,3 +341,8 @@ class PieceManager:
             except Exception as e:
                 logging.error(f"Lỗi khi đọc piece {piece_index}: {e}")
                 return None
+            
+    def get_bitfield(self):
+        """Trả về mảng bit cho biết những piece nào đã có"""
+        with self.lock:
+            return [piece.complete for piece in self.pieces]

@@ -398,7 +398,7 @@ class PeerConnection:
             self.peer_bitfield = [False] * num_pieces
             
             # Gửi bitfield của chính mình (pieces mà chúng ta có)
-            self._send_bitfield()
+            self._send_bitfield(self.piece_manager.get_bitfield())
             
             # Chuyển sang nonblocking mode để xử lý I/O tốt hơn
             self.socket.setblocking(False)
@@ -599,7 +599,7 @@ class PeerConnection:
         MAX_PENDING_REQUESTS = 5
         pending_requests = 0
         
-        while self.connected and not self.piece_manager.is_complete():
+        while (self.connected) and (not self.piece_manager.is_complete()):
             try:
                 # Nếu bị choke, đợi
                 if self.peer_choking:
@@ -831,32 +831,34 @@ class PeerConnection:
             self._close_connection()
             return False
             
-    def _send_bitfield(self, bitfield):
-        """Gửi bitfield message"""
-        if not self.connected:
-            return False
-            
-        try:
-            # Chuyển đổi bitfield dạng list [True, False, ...] sang bytes
-            byte_count = (len(bitfield) + 7) // 8
-            bit_array = bytearray(byte_count)
-            
-            for i, bit in enumerate(bitfield):
-                if bit:
-                    byte_index = i // 8
-                    bit_offset = 7 - (i % 8)  # MSB first
-                    bit_array[byte_index] |= (1 << bit_offset)
-            
-            # Bitfield: <len=0001+X><id=5><bitfield>
-            message_len = 1 + len(bit_array)
-            message = struct.pack(">IB", message_len, 5) + bit_array
-            
-            self.socket.sendall(message)
-            return True
-        except Exception as e:
-            logging.error(f"Error sending bitfield: {e}")
-            self._close_connection()
-            return False
+    def _send_bitfield(self, bitfield=None):
+        """Gửi bitfield message tới peer
+        
+        Args:
+            bitfield: Danh sách các piece mà chúng ta có (True/False cho mỗi piece)
+        """
+        # Nếu không có bitfield hoặc bitfield rỗng, không gửi
+        if not bitfield:
+            # Tạo bitfield từ piece_manager nếu có
+            if hasattr(self.piece_manager, 'get_bitfield') and callable(self.piece_manager.get_bitfield):
+                bitfield = self.piece_manager.get_bitfield()
+            else:
+                # Tạo bitfield rỗng dựa trên số lượng piece
+                bitfield = [False] * self.piece_manager.piece_count
+        
+        # Chuyển bitfield thành bytes
+        num_bytes = (len(bitfield) + 7) // 8
+        bitfield_bytes = bytearray(num_bytes)
+        
+        # Đặt các bit tương ứng
+        for i, has_piece in enumerate(bitfield):
+            if has_piece:
+                byte_index = i // 8
+                bit_index = 7 - (i % 8)  # Bit đầu tiên là MSB
+                bitfield_bytes[byte_index] |= (1 << bit_index)
+        
+        # Gửi BITFIELD message
+        self._send_message(MessageType.BITFIELD, bytes(bitfield_bytes))
             
     def _close_connection(self):
         """Đóng kết nối socket"""
@@ -886,3 +888,23 @@ class PeerConnection:
                 "bytes_uploaded": self.bytes_uploaded,
                 "last_active": self.last_active
             }
+
+    def _send_message(self, message_id, payload=b''):
+        """Gửi message đến peer
+        
+        Args:
+            message_id: Loại message (từ class MessageType)
+            payload: Dữ liệu của message (bytes)
+        """
+        try:
+            if message_id == MessageType.KEEP_ALIVE:
+                # Keep-alive là message đặc biệt không có id
+                message = struct.pack('>I', 0)
+            else:
+                # Gói tin thông thường: <length prefix><message ID><payload>
+                message = struct.pack('>IB', 1 + len(payload), message_id) + payload
+            
+            self.socket.sendall(message)
+        except Exception as e:
+            logging.error(f"Lỗi khi gửi message đến peer {self.peer_id[:8]}: {e}")
+            raise
