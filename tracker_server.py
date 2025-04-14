@@ -28,11 +28,12 @@ os.makedirs(METAINFO_DIR, exist_ok=True)
 # Xóa tất cả các file trong thư mục METAINFO_DIR khi khởi động
 def reset_tracker_state():
     """Reset trạng thái của tracker khi khởi động"""
-    global peer_registry, registered_peers
+    global peer_registry, registered_peers, torrent_ownership
     
-    # Reset peer_registry
+    # Reset peer_registry và các biến tracking
     peer_registry = {}
     registered_peers = set() 
+    torrent_ownership = {}
     
     # Xóa tất cả các file trong thư mục metainfo
     try:
@@ -57,6 +58,7 @@ reset_tracker_state()
 # Registry lưu thông tin các peer
 peer_registry = {}  # {info_hash: [peer1, peer2, ...]}
 registered_peers = set()  # Tập hợp các peer_id đã đăng ký
+torrent_ownership = {}  # {info_hash: {peer_id1, peer_id2, ...}} - Lưu thông tin quyền sở hữu
 PEER_TIMEOUT = 1800  # 30 phút
 
 def load_metainfo(info_hash):
@@ -170,6 +172,7 @@ def handle_announce(data):
     }
     
     # Xử lý theo loại event
+    # Xử lý theo loại event
     if event == "started":
         # Kiểm tra nếu peer đã tồn tại
         existing_peer = next((p for p in peer_registry[info_hash] if p["peer_id"] == peer_id), None)
@@ -177,6 +180,11 @@ def handle_announce(data):
             existing_peer.update(peer_info)
         else:
             peer_registry[info_hash].append(peer_info)
+        
+        # Thêm vào danh sách sở hữu torrent nếu có torrent
+        if info_hash in torrent_ownership:
+            torrent_ownership[info_hash].add(peer_id)
+        
         logging.info(f"Peer {peer_id[:8]} bắt đầu tải {info_hash[:8]}")
             
     elif event == "completed":
@@ -187,11 +195,65 @@ def handle_announce(data):
         else:
             peer_info["left"] = 0
             peer_registry[info_hash].append(peer_info)
-        logging.info(f"Peer {peer_id[:8]} đã tải xong {info_hash[:8]}")
+        
+        # Thêm vào danh sách sở hữu torrent
+        if info_hash not in torrent_ownership:
+            torrent_ownership[info_hash] = set()
+        torrent_ownership[info_hash].add(peer_id)
+        
+        logging.info(f"Peer {peer_id[:8]} đã tải xong {info_hash[:8]} và đăng ký sở hữu")
             
     elif event == "stopped":
+        # Xóa peer khỏi danh sách peer cho torrent này
         peer_registry[info_hash] = [p for p in peer_registry[info_hash] if p["peer_id"] != peer_id]
+        
+        def cleanup_orphaned_torrent(info_hash):
+            """Xóa torrent không còn ai sở hữu"""
+            try:
+                # Tìm tên torrent để xóa file
+                torrent_name = None
+                for file_path in METAINFO_DIR.glob("*.torrent.json"):
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            metainfo = json.load(f)
+                        if metainfo.get("info_hash") == info_hash:
+                            torrent_name = metainfo.get("name")
+                            # Xóa file metainfo
+                            os.remove(file_path)
+                            break
+                    except Exception as e:
+                        logging.error(f"Lỗi khi đọc file {file_path}: {e}")
+                        continue
+                
+                # Xóa khỏi torrent_ownership
+                if info_hash in torrent_ownership:
+                    del torrent_ownership[info_hash]
+                
+                # Xóa khỏi peer_registry nếu còn
+                if info_hash in peer_registry:
+                    del peer_registry[info_hash]
+                
+                if torrent_name:
+                    logging.info(f"Đã xóa torrent {torrent_name} ({info_hash[:8]}) vì không còn peer sở hữu")
+                else:
+                    logging.info(f"Đã xóa torrent {info_hash[:8]} vì không còn peer sở hữu")
+                    
+                return True
+            except Exception as e:
+                logging.error(f"Lỗi khi xóa torrent {info_hash}: {e}")
+                return False
+
+        # Nếu peer rời đi, xóa khỏi danh sách sở hữu
+        if info_hash in torrent_ownership and peer_id in torrent_ownership[info_hash]:
+            torrent_ownership[info_hash].remove(peer_id)
+            logging.info(f"Peer {peer_id[:8]} không còn sở hữu torrent {info_hash[:8]}")
+            
+            # Kiểm tra nếu không còn ai sở hữu torrent này
+            if not torrent_ownership[info_hash]:
+                cleanup_orphaned_torrent(info_hash)
+        
         logging.info(f"Peer {peer_id[:8]} đã dừng tải {info_hash[:8]}")
+
     else:  # Regular announce
         existing_peer = next((p for p in peer_registry[info_hash] if p["peer_id"] == peer_id), None)
         if existing_peer:
@@ -329,19 +391,14 @@ class TrackerHandler(BaseHTTPRequestHandler):
         post_data = self.rfile.read(content_length) 
 
         def handle_upload_metainfo(data):
-            """Xử lý yêu cầu upload metainfo từ peer
-            
-            Args:
-                data: Thông tin metainfo từ peer
-                
-            Returns:
-                dict: Kết quả xử lý
-            """
+            """Xử lý yêu cầu upload metainfo từ peer"""
             try:
                 # Kiểm tra xem dữ liệu có đầy đủ không
                 metainfo = data.get("metainfo")
-                if not metainfo:
-                    return {"success": False, "reason": "Thiếu thông tin metainfo"}
+                peer_id = data.get("peer_id")
+                
+                if not metainfo or not peer_id:
+                    return {"success": False, "reason": "Thiếu thông tin metainfo hoặc peer_id"}
                 
                 # Lấy info_hash và name từ metainfo
                 info_hash = metainfo.get("info_hash")
@@ -355,7 +412,13 @@ class TrackerHandler(BaseHTTPRequestHandler):
                 with open(metainfo_path, 'w', encoding='utf-8') as f:
                     json.dump(metainfo, f, indent=2)
                 
+                # Thêm peer vào danh sách sở hữu torrent
+                if info_hash not in torrent_ownership:
+                    torrent_ownership[info_hash] = set()
+                torrent_ownership[info_hash].add(peer_id)
+                
                 logging.info(f"Đã nhận và lưu metainfo cho torrent: {name} ({info_hash})")
+                logging.info(f"Peer {peer_id[:8]} đăng ký sở hữu torrent: {name}")
                 
                 return {
                     "success": True, 
